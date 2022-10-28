@@ -3,6 +3,8 @@ import taichi.math as tm
 from scipy.integrate import solve_ivp
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
+
 
 ti.init(arch=ti.cpu)
 dtype = ti.f32
@@ -83,7 +85,15 @@ def zone_state_space(t, x, A, B, d):
 
     return dx
 
-x0 = np.array([20, 32, 26.5])
+# get some data
+dt = 3600
+disturbances = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
+n = len(disturbances)
+index = range(0,n*60, 60)
+disturbances.index = index
+disturbances_dt = disturbances.groupby([disturbances.index // dt]).mean()
+
+
 Cz = 6953.9422092947289
 Cwe = 21567.368048437285
 Cwi = 188064.81655062342
@@ -93,19 +103,52 @@ Rw = 5.6456475609117183
 Rg = 3.9933826145529263
 A, B, C, D = get_ABCD(Cz, Cwe, Cwi, Re, Ri, Rw, Rg)
 
-d = np.zeros((5, 1))
-d[0] = 30
-# test implementation
-dx0 = zone_state_space(0,x0, A, B, d)
-
+d = disturbances_dt.values
+print(d.shape)
 # solve ode
-sol = solve_ivp(zone_state_space, [0, 3600*24.], x0, args=(A, B, d))
+
+def solve_zone(ts, te, x0, nsteps, A, B, d):
+    # 
+    t = []
+    x1 = []
+    x2 = []
+    x3 = []
+
+    # dt
+    dt = int((te - ts) / nsteps)
+
+    # do step
+    x0 = x0
+    for i in range(nsteps):
+        tspan = [dt*i, dt*(i+1)]
+        di = d[i,:].reshape(-1,1)
+        #print(x0.shape)
+        sol = solve_ivp(zone_state_space, tspan, x0, args=(A, B, di))
+
+        # out
+        t.extend(sol.t.tolist())
+        x1.extend(sol.y[0].tolist())
+        x2.extend(sol.y[1].tolist())
+        x3.extend(sol.y[2].tolist())
+        x0 = sol.y[:,-1]
+
+    x = [x1, x2, x3]
+
+    return t, x
+
+ts = 0
+nsteps = 24*28 #d.shape[0]
+te = ts + nsteps*dt
+x0 = np.array([20, 32, 26.5])
+
+t, x = solve_zone(ts, te, x0, nsteps, A, B, d)
 
 # plot results
 plt.figure(figsize = (12, 8))
-plt.plot(sol.t, sol.y[0], label="Tz")
-plt.plot(sol.t, sol.y[1], label="Twe")
-plt.plot(sol.t, sol.y[2], label="Twi")
+plt.plot(t, x[0], label="Tz")
+plt.plot(t, x[1], label="Twe")
+plt.plot(t, x[2], label="Twi")
+
 plt.xlabel('t')
 plt.ylabel('Temperature')
 plt.legend()
