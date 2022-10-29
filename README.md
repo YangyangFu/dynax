@@ -19,7 +19,7 @@ This repo implements a differentiable simulator for building energy systems to s
 ## Julia implementation
 
 
-### Reference
+### Toolchain
 - Flux.jl
 - DifferentialEquation.jl
 - Optimization.jl

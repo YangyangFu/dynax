@@ -1,15 +1,17 @@
 HOST = yangyangfu
 
 # define image names
-IMAGE_NAME = diffbuilding
+IMAGE_NAME = diffbuildings
 TAG_CPU = cpu
 TAG_GPU = gpu
 TAG_JL = jl
+TAG_TAICHI = taichi
 
 # some dockerfile
 DOCKERFILE_CPU = Dockerfile_CPU
 DOCKERFILE_GPU = Dockerfile_GPU
 DOCKERFILE_JL = Dockerfile.jl
+DOCKERFILE_TAICHI = Dockerfile.taichi
 
 #build:
 #	docker build --build-arg CONDA_VERSION=${CONDA_VERSION},CONDA_MD5=${CONDA_MD5} --no-cache --rm -t ${IMA_NAME} .
@@ -21,3 +23,6 @@ build_gpu:
 
 build_jl: 
 	docker build -f ${DOCKERFILE_JL} --no-cache --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JL} .
+
+build_taichi:
+	docker build -f ${DOCKERFILE_TAICHI} --no-cache --rm -t ${HOST}/${IMAGE_NAME}-${TAG_TAICHI} .

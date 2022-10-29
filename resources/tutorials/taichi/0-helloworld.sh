@@ -3,7 +3,7 @@ xhost + $(hostname) && \
 docker run \
     --user=root \
     --detach=false \
-    -e DISPLAY=${DISPLAY} \
+    -e DISPLAY=$(hostname):0 \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     --rm \
     -v `pwd`:/mnt/shared \
