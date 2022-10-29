@@ -93,7 +93,6 @@ index = range(0,n*60, 60)
 disturbances.index = index
 disturbances_dt = disturbances.groupby([disturbances.index // dt]).mean()
 
-
 Cz = 6953.9422092947289
 Cwe = 21567.368048437285
 Cwi = 188064.81655062342
