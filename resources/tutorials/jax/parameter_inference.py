@@ -111,7 +111,7 @@ data.index = index
 data = data.groupby([data.index // dt]).mean()
 
 # split training and testing
-ratio = 0.1
+ratio = 0.7
 n_train = int(len(data)*ratio)
 print(n_train)
 data_train = data.iloc[:n_train, :]
@@ -146,27 +146,38 @@ model = lambda p,x: forward_parameters(p, x, ts, te, dt, solver, d)
 # loss function
 def loss_fcn(p, x, y_true):
     _, y_pred = model(p, x)
-    return jnp.mean((y_pred[:,0] - y_true)**2)
+    loss = jnp.mean((y_pred[:,0] - y_true)**2)
+
+    return loss
 
 # update 
 @jit 
 def update(p, x, y_true, lr = 0.1):
-    return p - lr*jax.numpy.clip(jax.grad(loss_fcn)(p, x, y_true), -10, 10)
+    return p - lr*jax.grad(loss_fcn)(p, x, y_true)
 
 # data preparation
 d = data_train.values[:,:5]
 y_train = data_train.values[:,5]
 
-p = jnp.array([1., 1., 1., 1., 1., 1., 1., 32., 26.])
-x0 = y_train[0]
+p = jnp.array([6953.9422092947289, 21567.368048437285,
+              188064.81655062342, 1.4999822619982095, 
+              0.55089086571081913, 5.6456475609117183, 
+              3.9933826145529263, 32., 26.])
 
-nepochs = 1000
-lr = 0.00001
+x0 = y_train[0]
+print(p, x0)
+print(y_train)
+print(loss_fcn(p, x0, y_train))
+
+nepochs = 10000
+lr = 0.1
 for i in range(nepochs):
     p = update(p, x0, y_train, lr)
 
     if i % 100 == 0:
         print(f"======= epoch: {i}")
+        loss = loss_fcn(p, x0, y_train)
+        print(f" training loss is: {loss}")
 
 print(p)
 print(loss_fcn(p, x0, y_train))
