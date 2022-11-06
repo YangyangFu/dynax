@@ -5,9 +5,10 @@ import numpy as np
 from jax import jit
 from jax import grad
 from diffrax import diffeqsolve, ODETerm, Euler, Dopri5, SaveAt, PIDController
+import optax 
 import matplotlib.pyplot as plt
 import time 
-
+import json
 
 n_devices = jax.local_device_count()
 print(n_devices)
@@ -111,7 +112,7 @@ data.index = index
 data = data.groupby([data.index // dt]).mean()
 
 # split training and testing
-ratio = 0.7
+ratio = 0.75
 n_train = int(len(data)*ratio)
 print(n_train)
 data_train = data.iloc[:n_train, :]
@@ -129,7 +130,7 @@ def forward_parameters(p,x, ts, te, dt, solver, d):
     p is [Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0]
     x is Tz0
     """
-    Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0 = p
+    Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0 = p['rc']
     A, B, C, D = get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg)
     args = (A, B, d)
 
@@ -150,27 +151,27 @@ def loss_fcn(p, x, y_true):
 
     return loss
 
+# data preparation
+d = data_train.values[:,:5]
+y_train = data_train.values[:,5]
+
+p0 = jnp.array([6953.9422092947289, 21567.368048437285,
+              188064.81655062342, 1.4999822619982095, 
+              0.55089086571081913, 5.6456475609117183, 
+              3.9933826145529263, 32., 26.])
+
+x = y_train[0]
+print(p0, x)
+print(y_train)
+print(loss_fcn({'rc':p0}, x, y_train))
+
+"""
+# A naive gradient descent implementation
 # update 
 @jit 
 def update(p, x, y_true, lr = 0.1):
     return p - lr*jax.grad(loss_fcn)(p, x, y_true)
 
-# data preparation
-d = data_train.values[:,:5]
-y_train = data_train.values[:,5]
-
-p = jnp.array([6953.9422092947289, 21567.368048437285,
-              188064.81655062342, 1.4999822619982095, 
-              0.55089086571081913, 5.6456475609117183, 
-              3.9933826145529263, 32., 26.])
-
-x0 = y_train[0]
-print(p, x0)
-print(y_train)
-print(loss_fcn(p, x0, y_train))
-
-nepochs = 10000
-lr = 0.1
 for i in range(nepochs):
     p = update(p, x0, y_train, lr)
 
@@ -181,3 +182,48 @@ for i in range(nepochs):
 
 print(p)
 print(loss_fcn(p, x0, y_train))
+"""
+
+def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransformation) -> optax.Params:
+    # initialize params
+    states = optimizer.init(params)
+    x, y = data 
+
+    @jit
+    def step(params, states, x, y):
+        loss, grads = jax.value_and_grad(loss_fcn)(params, x, y)
+        updates, states = optimizer.update(grads, states, params)
+        params = optax.apply_updates(params, updates)
+
+        return params, states, loss
+    
+    for epoch in range(n_epochs):
+        params, states, loss = step(params, states, x, y)
+        if epoch % 10 == 0:
+            print(f'epoch {epoch}, training loss: {loss}')
+    
+    return params
+
+lr = 0.1
+n_epochs = 2620
+schedule = optax.exponential_decay(
+    init_value = 0.01, 
+    transition_steps = 5000, 
+    decay_rate = 0.99, 
+    transition_begin=0, 
+    staircase=False, 
+    end_value=1e-08
+)
+optimizer = optax.chain(
+    #optax.clip_by_global_norm(1e-05),
+    optax.adam(learning_rate = schedule)
+)
+
+initial_params = {'rc': p0}
+params = fit((x, y_train), n_epochs, initial_params, optimizer)
+print(params)
+
+# save the parameters
+params_tolist = [float(p) for p in params['rc']]
+with open('zone_coefficients.json', 'w') as f:
+    json.dump(params,f)
