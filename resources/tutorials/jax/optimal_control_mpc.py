@@ -7,12 +7,14 @@ import optax
 import pandas as pd 
 import numpy as np 
 import matplotlib.pyplot as plt 
+import json 
 
 class MPC():
     def __init__(self, PH, CH, dt, predictor, price):
         self.PH = PH
         self.CH = CH
         self.dt = dt
+        self.NU = 1 # one control variable in this case
 
         # reduced order model
         self.predictor = predictor
@@ -22,8 +24,8 @@ class MPC():
         self.occ_end = 18
 
         # control variable bounds
-        self.u_lb = -10*jnp.ones([self.PH, 1])
-        self.u_ub = 0*jnp.ones([self.PH, 1])
+        self.u_lb = -10*jnp.ones([1, self.NU]).reshape(1,-1)
+        self.u_ub = 0*jnp.ones([1, self.NU]).reshape(1, -1)
 
         # optimization settings
         # ode solver
@@ -41,6 +43,10 @@ class MPC():
         # energy price
         self.price = price
 
+        # optimization start points
+        self.u_start = jnp.repeat(self.u_ub, self.PH).reshape(-1, 1)
+        print(self.u_start.shape)
+
     # set methods 
     def set_time(self, time):
         self.time = time
@@ -48,6 +54,10 @@ class MPC():
     def set_state(self, state):
         self.state = state
     
+    # set u_start: a good starting point can always speed up the optimization
+    def set_u_start_from_last_step(self, u_prev):
+        self.u_start = jnp.concatenate((u_prev[self.NU:], self.u_ub), axis = 0) 
+
     # main method
     def step(self, disturbance):
         """
@@ -90,14 +100,14 @@ class MPC():
         tolerance = 1e-06
         n_epochs = 1000
         optimizer = optax.adamw(learning_rate = lr)
-        u0 = jnp.zeros([self.PH, 1])
+        #u0 = jnp.zeros([self.PH, 1])
+        u0 = self.u_start
         params = {'u': u0}
         opt_state = optimizer.init(params)
         
         # main loop
         BIG_NUMBER = 1E6
         epoch = 0
-        rel_error = 1
         loss = BIG_NUMBER
         
         # terminatio conditions
@@ -157,6 +167,7 @@ class MPC():
         """
         Bound control inputs to lower and upper limits
         """
+        u_ub_ph = jnp.repeat(self.u_ub, self.PH)
         return jnp.sum(jax.nn.relu(u - self.u_ub) + jax.nn.relu(self.u_lb - u))
 
 
@@ -247,7 +258,7 @@ def get_disturbance_ph(disturbance, ts, PH, dt):
 
 if __name__ == '__main__':
     # MPC setting
-    PH = 12
+    PH = 24
     CH = 1
     dt = 900
     nsteps_per_hour = int(3600 / dt)
@@ -256,18 +267,12 @@ if __name__ == '__main__':
     t_base = 181*24*3600 # 7/1
     dist = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
     n = len(dist)
-    print(n)
     index = range(t_base, t_base + n*60, 60)
-    print(len(index))
-    print(dist.head())
     dist.index = index
     dist = dist.groupby([dist.index // dt]).mean()
-    print(dist.head())
-    print(len(dist))
     index_dt = range(t_base, t_base + len(dist)*dt, dt)
-    print(len(index_dt))
     dist.index = index_dt 
-    print(dist.head())
+
     # remove last column which is not disturbance
     dist = dist.iloc[:,:-1]
 
@@ -294,6 +299,7 @@ if __name__ == '__main__':
 
     # initialize MPC
     mpc = MPC(PH, CH, dt, predictor, price)
+    print(mpc.u_start.shape)
 
     # initial state for rc zone
     state = jnp.array([20, 27.21, 26.76])
@@ -314,9 +320,12 @@ if __name__ == '__main__':
 
         # set mpc states
         mpc.set_state(state)
-
+        
         # mpc step
         u_ph = mpc.step(dist_t_ph)
+
+        # set start point for next optimization
+        mpc.set_u_start_from_last_step(u_ph)
 
         # get control to CH
         u_ch = u_ph[0][0]
@@ -374,3 +383,20 @@ if __name__ == '__main__':
     plt.ylabel("Cooling Rate (kW)")
     plt.xticks(xticks, xticklabels)
     plt.savefig('mpc.png')
+
+    # save some kpis
+    energy_cost = jnp.sum(price_dt.flatten()*jnp.abs(jnp.array(u_opt))*dt/3600)
+    energy = jnp.sum(jnp.abs(jnp.array(u_opt))*dt/3600)
+    dT_lb = jnp.maximum(0, T_lb_dt.flatten() - jnp.array(Tz_opt))
+    dT_ub = jnp.maximum(0, jnp.array(Tz_opt) - T_ub_dt.flatten())
+    dT_max = jnp.max(dT_lb + dT_ub)
+    dTh = (jnp.sum(dT_lb) + jnp.sum(dT_ub))*dt/3600
+
+    kpi = {}
+    kpi['energy_cost'] = float(energy_cost)
+    kpi['energy'] = float(energy)
+    kpi['dT_max'] = float(dT_max)
+    kpi['dTh'] = float(dTh)
+
+    with open("mpc_kpi.json", 'w') as file:
+        json.dump(kpi, file)
