@@ -88,8 +88,8 @@ class MPC():
         # call optimizer to minimize loss
         lr = 0.01
         tolerance = 1e-06
-        n_epochs = 10
-        optimizer = optax.adam(learning_rate = lr)
+        n_epochs = 1000
+        optimizer = optax.adamw(learning_rate = lr)
         u0 = jnp.zeros([self.PH, 1])
         params = {'u': u0}
         opt_state = optimizer.init(params)
@@ -365,9 +365,12 @@ if __name__ == '__main__':
     plt.plot(To_opt, 'b-', label="Outdoor")
     plt.plot(T_ub_dt.flatten(), 'k--', label="Bound")
     plt.plot(T_lb_dt.flatten(), 'k--')
+    plt.ylabel("Temperature (C)")
     plt.xticks(xticks, [])
+    plt.legend()
 
     plt.subplot(3,1,3)
     plt.plot(u_opt)
+    plt.ylabel("Cooling Rate (kW)")
     plt.xticks(xticks, xticklabels)
     plt.savefig('mpc.png')
