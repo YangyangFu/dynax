@@ -6,9 +6,10 @@ from diffrax import diffeqsolve, ODETerm, Euler, Dopri5, SaveAt, PIDController
 import optax 
 import pandas as pd 
 import numpy as np 
+import matplotlib.pyplot as plt 
 
 class MPC():
-    def __init__(self, PH, CH, dt, predictor):
+    def __init__(self, PH, CH, dt, predictor, price):
         self.PH = PH
         self.CH = CH
         self.dt = dt
@@ -21,8 +22,8 @@ class MPC():
         self.occ_end = 18
 
         # control variable bounds
-        self.u_lb = -10*jnp.ones(self.PH, 1)
-        self.u_ub = 0*jnp.ones(self.PH, 1)
+        self.u_lb = -10*jnp.ones([self.PH, 1])
+        self.u_ub = 0*jnp.ones([self.PH, 1])
 
         # optimization settings
         # ode solver
@@ -38,12 +39,7 @@ class MPC():
         self.T_lb = jnp.array(self.T_lb)
 
         # energy price
-        self.price = [0.02987, 0.02987, 0.02987, 0.02987, 
-                    0.02987, 0.02987, 0.04667, 0.04667, 
-                    0.04667, 0.04667, 0.04667, 0.04667, 
-                    0.15877, 0.15877, 0.15877, 0.15877,
-                    0.15877, 0.15877, 0.15877, 0.04667, 
-                    0.04667, 0.04667, 0.02987, 0.02987]
+        self.price = price
 
     # set methods 
     def set_time(self, time):
@@ -83,28 +79,48 @@ class MPC():
             t = int(ts + ph*self.dt)
             h = int((t % 86400) /3600) # hour index: 0-based
             h_ph.append(h)
-        
+        h_ph = np.array(h_ph) # list to array for jax
+
         price_ph = self.price[h_ph].reshape(-1,1)
         T_ub_ph = self.T_ub[h_ph].reshape(-1, 1)
         T_lb_ph = self.T_lb[h_ph].reshape(-1, 1)
 
         # call optimizer to minimize loss
-        lr = 0.1
-        n_epochs = 10000
+        lr = 0.01
+        tolerance = 1e-06
+        n_epochs = 10
         optimizer = optax.adam(learning_rate = lr)
-        u0 = jnp.zeros(self.PH, 1)
+        u0 = jnp.zeros([self.PH, 1])
         params = {'u': u0}
         opt_state = optimizer.init(params)
-        for epoch in range(n_epochs):
+        
+        # main loop
+        BIG_NUMBER = 1E6
+        epoch = 0
+        rel_error = 1
+        loss = BIG_NUMBER
+        
+        # terminatio conditions
+        # this is very import to gradient-descent based MPC 
+        # for building energy optimization, we expect 0 in the objective function. therefore we use obsolute error here
+        while epoch < n_epochs and loss > tolerance:
+            # get weights from previou step
+            u_ph = params['u']
+
+            # update weights
             loss, grads = jax.value_and_grad(self.loss_mpc)(
                 params, state, ts, te, self.dt, disturbance, T_ub_ph, T_lb_ph, price_ph)
             updates, opt_state = optimizer.update(grads, opt_state, params)
-            params = optax.apply_update(params, updates)
+            params = optax.apply_updates(params, updates)
 
+            #rel_error = jnp.abs(loss - loss_prev)/max(loss_prev, 1e-12)
             if epoch % 10 == 0:
                 print(f'epoch {epoch}, training loss: {loss}')
-        
-        u_ph = params['u']
+            #print(f'epoch {epoch}, training loss: {loss}, relative loss: {rel_error}')
+
+            # update
+            epoch += 1
+
         return u_ph
 
         # control variable is qhvac
@@ -114,7 +130,7 @@ class MPC():
         T_vios = self.get_T_violations(state, ts, te, dt, d, T_ub, T_lb)
         u_vios = self.get_u_violations(u)
 
-        obj = price*u*self.dt/3600 + T_vios + u_vios 
+        obj = price*jnp.abs(u)*self.dt/3600 + T_vios + u_vios 
         
         return jnp.sum(obj)
 
@@ -205,7 +221,7 @@ def forward(func, ts, te, dt, x0, solver, args):
     i = 0
     x = x0
 
-    while tprev < te - dt:
+    while tprev < te:
         x, _, _, state, _ = solver.step(
             term, tprev, tnext, x, args, state, made_jump=False)
         tprev = tnext
@@ -227,24 +243,33 @@ def get_disturbance_ph(disturbance, ts, PH, dt):
     """
     return disturbance for PH from a given data frame
     """
-    return disturbance.loc[ts:ts+PH*dt, :]
+    return disturbance.loc[ts:ts+PH*dt-1, :]
 
 if __name__ == '__main__':
     # MPC setting
     PH = 12
     CH = 1
     dt = 900
+    nsteps_per_hour = int(3600 / dt)
 
     # Get pre-stored disturbances generated from EPlus
     t_base = 181*24*3600 # 7/1
     dist = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
     n = len(dist)
+    print(n)
     index = range(t_base, t_base + n*60, 60)
+    print(len(index))
+    print(dist.head())
     dist.index = index
     dist = dist.groupby([dist.index // dt]).mean()
-    index_dt = range(t_base, t_base + len(dist)*dt, dt)
-    dist.index = index 
     print(dist.head())
+    print(len(dist))
+    index_dt = range(t_base, t_base + len(dist)*dt, dt)
+    print(len(index_dt))
+    dist.index = index_dt 
+    print(dist.head())
+    # remove last column which is not disturbance
+    dist = dist.iloc[:,:-1]
 
     # Experiment settings
     ts = 195*24*3600
@@ -259,20 +284,33 @@ if __name__ == '__main__':
     Cai, Cwe, Cwi, Re, Ri, Rw, Rg = predictor['zone_model']
     A, B, C, D = get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg)
     
+    # set energy price schedule
+    price = jnp.array([0.02987, 0.02987, 0.02987, 0.02987,
+               0.02987, 0.02987, 0.04667, 0.04667,
+               0.04667, 0.04667, 0.04667, 0.04667,
+               0.15877, 0.15877, 0.15877, 0.15877,
+               0.15877, 0.15877, 0.15877, 0.04667,
+               0.04667, 0.04667, 0.02987, 0.02987])
+
     # initialize MPC
-    mpc = MPC(PH, CH, dt, predictor)
+    mpc = MPC(PH, CH, dt, predictor, price)
 
     # initial state for rc zone
     state = jnp.array([20, 27.21, 26.76])
     
     # initialize output 
     u_opt  = []
+    Tz_opt = []
+    To_opt = []
     # main loop
     for t in range(ts, te, dt):
         
         # get disturbance
         dist_t_ph = get_disturbance_ph(dist, t, PH, dt)
         dist_t_ph = jnp.array(dist_t_ph.values)
+
+        # set mpc time
+        mpc.set_time(t)
 
         # set mpc states
         mpc.set_state(state)
@@ -281,17 +319,55 @@ if __name__ == '__main__':
         u_ph = mpc.step(dist_t_ph)
 
         # get control to CH
-        u_ch = u_ph[0]
+        u_ch = u_ph[0][0]
 
         # apply control to system
-        dist_t = dist_t_ph[0,:]
-        dist_t = dist.at[0, 2].set(u_ch)
+        dist_t = dist_t_ph[0,:].reshape(1,-1)
+        dist_t = dist_t.at[0, 2].set(u_ch)
         args = (A, B, dist_t)
         ts, xs = forward(f, t, t+dt, dt, state, Euler(), args)
         state = xs[-1,:]
-        
+
         # save results
-        u_opt.append(u_ch)
+        # control signal applied
+        u_opt.append(float(u_ch))
 
+        # measurements
+        Tz_opt.append(float(state[0]))
+        To_opt.append(float(dist_t[0,0]))
 
-    print(u_opt)
+    # plot some figures
+    # process prices 24 -> 96 in this case
+    price_dt = price.reshape(-1,1)
+    for step in range(nsteps_per_hour-1):
+        price_dt = jnp.concatenate((price_dt, price.reshape(-1,1)), axis=1)
+    
+    # temp bounds
+    T_ub = mpc.T_ub
+    T_lb = mpc.T_lb
+    T_ub_dt = T_ub.reshape(-1,1)
+    T_lb_dt = T_lb.reshape(-1,1)
+    for step in range(nsteps_per_hour-1):
+        T_ub_dt = jnp.concatenate((T_ub_dt, T_ub.reshape(-1, 1)), axis=1)
+        T_lb_dt = jnp.concatenate((T_lb_dt, T_lb.reshape(-1, 1)), axis=1)
+
+    xticks = range(0,24*nsteps_per_hour, 6*nsteps_per_hour)
+    xticklabels = range(0, 24, 6)
+
+    plt.figure(figsize=(12,6))
+    plt.subplot(3,1,1)
+    plt.plot(price_dt.flatten())
+    plt.xticks(xticks,[])
+    plt.ylabel("Energy Price ($/kWh)")
+
+    plt.subplot(3,1,2)
+    plt.plot(Tz_opt, 'r-', label="Zone")
+    plt.plot(To_opt, 'b-', label="Outdoor")
+    plt.plot(T_ub_dt.flatten(), 'k--', label="Bound")
+    plt.plot(T_lb_dt.flatten(), 'k--')
+    plt.xticks(xticks, [])
+
+    plt.subplot(3,1,3)
+    plt.plot(u_opt)
+    plt.xticks(xticks, xticklabels)
+    plt.savefig('mpc.png')
