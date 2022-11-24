@@ -257,6 +257,10 @@ def get_disturbance_ph(disturbance, ts, PH, dt):
     return disturbance.loc[ts:ts+PH*dt-1, :]
 
 if __name__ == '__main__':
+    print(jax.devices())
+    n_devices = jax.local_device_count()
+    print(n_devices)
+
     # MPC setting
     PH = 24
     CH = 1
