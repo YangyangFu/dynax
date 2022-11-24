@@ -15,6 +15,8 @@ This repo implements a differentiable simulator for building energy systems to s
 - Jax for basic auto-diff operations
 - Diffrax for numerical differentiable equation solvers in JAX
 - Sympy2jax for differential equation modeling in JAX
+- pydae using sundials
+- jax examples: https://ericmjl.github.io/dl-workshop/02-jax-idioms/02-loopy-carry.html
 
 ## Julia implementation
 
