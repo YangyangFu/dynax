@@ -26,6 +26,18 @@ This repo implements a differentiable simulator for building energy systems to s
 - DifferentialEquation.jl
 - Optimization.jl
 
+# Applications
+## Forward Simulation
+
+## Deterministic Parameter Inference
+
+## Bayesian Inference
+
+## MPC
+
+## Model-based DRL
+
+
 # Contact
 
 Yangyang Fu
