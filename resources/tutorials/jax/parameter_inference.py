@@ -114,13 +114,16 @@ def forward(func, ts, te, dt, x0, solver, args):
 
 
 ### Parameter Inference
-dt = 3600
-# load training data
+
+# load training data - 1-min sampling rate
 data = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
-n = len(data)
-index = range(0, n*60, 60)
+index = range(0, len(data)*60, 60)
 data.index = index
+
+# sample every hour
+dt = 3600
 data = data.groupby([data.index // dt]).mean()
+n = len(data)
 
 # split training and testing
 ratio = 0.75
@@ -136,7 +139,7 @@ solver = Euler()
 
 # forward steps
 f = lambda t, x, args: zone_state_space(t, x, *args)#args[0], args[1], args[2]) 
-def forward_parameters(p,x, ts, te, dt, solver, d):
+def forward_parameters(p, x, ts, te, dt, solver, d):
     """
     p is [Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0]
     x is Tz0
@@ -171,10 +174,9 @@ p0 = jnp.array([6953.9422092947289, 21567.368048437285,
               0.55089086571081913, 5.6456475609117183, 
               3.9933826145529263, 32., 26.])
 
-x = y_train[0]
-print(p0, x)
-print(y_train)
-print(loss_fcn({'rc':p0}, x, y_train))
+x0 = y_train[0]
+print(p0, x0)
+print(loss_fcn({'rc':p0}, x0, y_train))
 
 """
 # A naive gradient descent implementation
@@ -210,16 +212,15 @@ def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransform
     
     for epoch in range(n_epochs):
         params, states, loss, grads = step(params, states, x, y)
-        if epoch % 10 == 0:
+        if epoch % 1000 == 0:
             print(f'epoch {epoch}, training loss: {loss}')
             print(grads['rc'].max(), grads['rc'].min())
 
     return params
 
-lr = 0.01
-n_epochs = 5000
+n_epochs = 50000
 schedule = optax.exponential_decay(
-    init_value = 0.03, 
+    init_value = 0.1, 
     transition_steps = 1000, 
     decay_rate = 0.99, 
     transition_begin=0, 
@@ -227,13 +228,31 @@ schedule = optax.exponential_decay(
     end_value=1e-05
 )
 optimizer = optax.chain(
-    optax.clip(0.01),
-    optax.adamw(learning_rate = schedule)
+    optax.adabelief(learning_rate = schedule)
 )
 
 initial_params = {'rc': p0}
-params = fit((x, y_train), n_epochs, initial_params, optimizer)
-print(params)
+params = fit((x0, y_train), n_epochs, initial_params, optimizer)
+
+## run for performance check
+# forward simulation with infered parameters for the whole data set
+ts = 0
+te = ts + n*dt
+d = data.values[:, :5]
+y = data.values[:, 5]
+model = lambda p,x: forward_parameters(p, x, ts, te, dt, solver, d)
+t_pred, ys_pred = model(params, x0)
+y_pred = ys_pred[:,0]
+
+print(t_pred.shape, y_pred.shape)
+print(y.shape)
+
+plt.figure(figsize=(12,6))
+plt.plot(y, 'b-', label='Target')
+plt.plot(y_pred, 'r-', label="Prediction")
+plt.ylabel('Temperature (C)')
+plt.legend()
+plt.savefig('parameter_inference.png')
 
 # save the parameters
 params_tolist = [float(p) for p in params['rc']]
