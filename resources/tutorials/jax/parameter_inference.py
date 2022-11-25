@@ -159,24 +159,17 @@ def forward_parameters(p, x, ts, te, dt, solver, d):
 model = lambda p,x: forward_parameters(p, x, ts, te, dt, solver, d)
 
 # loss function
-def loss_fcn(p, x, y_true):
+def loss_fcn(p, x, y_true, p_lb, p_ub):
     _, y_pred = model(p, x)
     loss = jnp.mean((y_pred[1:,0] - y_true)**2)
 
-    return loss
+    penalty = jnp.sum(jax.nn.relu(p['rc'] - p_ub) + jax.nn.relu(p_lb - p['rc']))
+
+    return loss + penalty
 
 # data preparation
 d = data_train.values[:,:5]
 y_train = data_train.values[:,5]
-
-p0 = jnp.array([6953.9422092947289, 21567.368048437285,
-              188064.81655062342, 1.4999822619982095, 
-              0.55089086571081913, 5.6456475609117183, 
-              3.9933826145529263, 32., 26.])
-
-x0 = y_train[0]
-print(p0, x0)
-print(loss_fcn({'rc':p0}, x0, y_train))
 
 """
 # A naive gradient descent implementation
@@ -197,28 +190,40 @@ print(p)
 print(loss_fcn(p, x0, y_train))
 """
 
-def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransformation) -> optax.Params:
+def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransformation, p_lb, p_ub) -> optax.Params:
     # initialize params
     states = optimizer.init(params)
     x, y = data 
 
     @jit
-    def step(params, states, x, y):
-        loss, grads = jax.value_and_grad(loss_fcn)(params, x, y)
+    def step(params, states, x, y, p_lb, p_ub):
+        loss, grads = jax.value_and_grad(loss_fcn)(params, x, y, p_lb, p_ub)
         updates, states = optimizer.update(grads, states, params)
         params = optax.apply_updates(params, updates)
 
         return params, states, loss, grads
     
     for epoch in range(n_epochs):
-        params, states, loss, grads = step(params, states, x, y)
+        params, states, loss, grads = step(params, states, x, y, p_lb, p_ub)
         if epoch % 1000 == 0:
             print(f'epoch {epoch}, training loss: {loss}')
             print(grads['rc'].max(), grads['rc'].min())
 
     return params
 
-n_epochs = 50000
+## Run optimization for inference
+# parameter settings
+p_lb = jnp.array([1.0E3, 1.0E4, 1.0E5, 1.0, 1E-02, 1.0, 1.0E-1, 20.0, 20.0])
+p_ub = jnp.array([1.0E5, 1.0E6, 1.0E7, 10., 10., 100., 10., 35.0, 30.0])
+
+#p0 = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394, 1.1442776918411255, 5.741048812866211, 34.82638931274414, 26.184139251708984])
+
+p0 = p_ub
+x0 = y_train[0]
+print(p0, x0)
+print(loss_fcn({'rc':p0}, x0, y_train, p_lb, p_ub))
+
+n_epochs = 100000
 schedule = optax.exponential_decay(
     init_value = 0.1, 
     transition_steps = 1000, 
@@ -232,7 +237,7 @@ optimizer = optax.chain(
 )
 
 initial_params = {'rc': p0}
-params = fit((x0, y_train), n_epochs, initial_params, optimizer)
+params = fit((x0, y_train), n_epochs, initial_params, optimizer, p_lb, p_ub)
 
 ## run for performance check
 # forward simulation with infered parameters for the whole data set
