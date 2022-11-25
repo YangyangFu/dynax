@@ -345,7 +345,7 @@ if __name__ == '__main__':
     
     # initialize random seeds for noises in measurements
     keys = random.split(key, int((te-ts)/dt))
-    mu_noise = 0.1
+    mu_noise = 0.2
 
     # initialize output 
     u_opt  = []
@@ -420,10 +420,11 @@ if __name__ == '__main__':
     plt.ylabel("Energy Price ($/kWh)")
 
     plt.subplot(3,1,2)
-    plt.plot(Tz_opt, 'r-', label="Zone")
+    plt.plot(Tz_opt, 'r-', label="Zone Measurement")
     plt.plot(To_opt, 'b-', label="Outdoor")
     plt.plot(T_ub_dt, 'k--', label="Bound")
     plt.plot(T_lb_dt, 'k--')
+    plt.plot(Tz_opt_pred, 'r-.', label="Zone Prediction")
     plt.ylabel("Temperature (C)")
     plt.xticks(xticks, [])
     plt.legend()
