@@ -98,7 +98,7 @@ class MPC():
         # call optimizer to minimize loss
         lr = 0.01
         tolerance = 1e-06
-        n_epochs = 1000
+        n_epochs = 5000
         optimizer = optax.adamw(learning_rate = lr)
         #u0 = jnp.zeros([self.PH, 1])
         u0 = self.u_start
@@ -123,7 +123,7 @@ class MPC():
             params, opt_state, u_ph, loss, grads = _fit_step(
                 params, opt_state, state, ts, te, dt, disturbance, T_ub_ph, T_lb_ph, price_ph, zone_model, ode_solver, u_ub, u_lb, PH, optimizer)
 
-            if epoch % 10 == 0:
+            if epoch % 100 == 0:
                 print(f'epoch {epoch}, training loss: {loss}')
             #print(f'epoch {epoch}, training loss: {loss}, relative loss: {rel_error}')
 
@@ -293,7 +293,7 @@ if __name__ == '__main__':
     print(n_devices)
 
     # MPC setting
-    PH = 24
+    PH = 48
     CH = 1
     dt = 900
     nsteps_per_hour = int(3600 / dt)
@@ -313,7 +313,8 @@ if __name__ == '__main__':
 
     # Experiment settings
     ts = 195*24*3600
-    te = 1*24*3600 + ts
+    ndays = 7
+    te = ndays*24*3600 + ts
 
     # get predictor
     predictor = {}
@@ -343,6 +344,7 @@ if __name__ == '__main__':
     u_opt  = []
     Tz_opt = []
     To_opt = []
+    
     # main loop
     for t in range(ts, te, dt):
         
@@ -379,13 +381,15 @@ if __name__ == '__main__':
         # measurements
         Tz_opt.append(float(state[0]))
         To_opt.append(float(dist_t[0,0]))
-
+    
     # plot some figures
     # process prices 24 -> 96 in this case
     price_dt = price.reshape(-1,1)
     for step in range(nsteps_per_hour-1):
         price_dt = jnp.concatenate((price_dt, price.reshape(-1,1)), axis=1)
-    
+    price_dt = jnp.repeat(price_dt.reshape(1,-1), ndays, axis=0).reshape(-1,1)
+ 
+
     # temp bounds
     T_ub = mpc.T_ub
     T_lb = mpc.T_lb
@@ -394,21 +398,23 @@ if __name__ == '__main__':
     for step in range(nsteps_per_hour-1):
         T_ub_dt = jnp.concatenate((T_ub_dt, T_ub.reshape(-1, 1)), axis=1)
         T_lb_dt = jnp.concatenate((T_lb_dt, T_lb.reshape(-1, 1)), axis=1)
+    T_ub_dt = jnp.repeat(T_ub_dt.reshape(1,-1), ndays, axis=0).reshape(-1,1)
+    T_lb_dt = jnp.repeat(T_lb_dt.reshape(1,-1), ndays, axis=0).reshape(-1,1)
 
-    xticks = range(0,24*nsteps_per_hour, 6*nsteps_per_hour)
-    xticklabels = range(0, 24, 6)
+    xticks = range(0,24*nsteps_per_hour*ndays, 6*nsteps_per_hour)
+    xticklabels = range(0, 24*ndays, 6)
 
     plt.figure(figsize=(12,6))
     plt.subplot(3,1,1)
-    plt.plot(price_dt.flatten())
+    plt.plot(price_dt)
     plt.xticks(xticks,[])
     plt.ylabel("Energy Price ($/kWh)")
 
     plt.subplot(3,1,2)
     plt.plot(Tz_opt, 'r-', label="Zone")
     plt.plot(To_opt, 'b-', label="Outdoor")
-    plt.plot(T_ub_dt.flatten(), 'k--', label="Bound")
-    plt.plot(T_lb_dt.flatten(), 'k--')
+    plt.plot(T_ub_dt, 'k--', label="Bound")
+    plt.plot(T_lb_dt, 'k--')
     plt.ylabel("Temperature (C)")
     plt.xticks(xticks, [])
     plt.legend()
@@ -417,13 +423,13 @@ if __name__ == '__main__':
     plt.plot(u_opt)
     plt.ylabel("Cooling Rate (kW)")
     plt.xticks(xticks, xticklabels)
-    plt.savefig('mpc.png')
+    plt.savefig("mpc_"+str(PH)+".png")
 
     # save some kpis
     energy_cost = jnp.sum(price_dt.flatten()*jnp.abs(jnp.array(u_opt))*dt/3600)
     energy = jnp.sum(jnp.abs(jnp.array(u_opt))*dt/3600)
-    dT_lb = jnp.maximum(0, T_lb_dt.flatten() - jnp.array(Tz_opt))
-    dT_ub = jnp.maximum(0, jnp.array(Tz_opt) - T_ub_dt.flatten())
+    dT_lb = jnp.maximum(0, T_lb_dt - jnp.array(Tz_opt).reshape(-1,1))
+    dT_ub = jnp.maximum(0, jnp.array(Tz_opt).reshape(-1,1) - T_ub_dt)
     dT_max = jnp.max(dT_lb + dT_ub)
     dTh = (jnp.sum(dT_lb) + jnp.sum(dT_ub))*dt/3600
 
@@ -433,5 +439,5 @@ if __name__ == '__main__':
     kpi['dT_max'] = float(dT_max)
     kpi['dTh'] = float(dTh)
 
-    with open("mpc_kpi.json", 'w') as file:
+    with open("mpc_kpi_"+str(PH)+".json", 'w') as file:
         json.dump(kpi, file)
