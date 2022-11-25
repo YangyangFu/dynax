@@ -1,7 +1,7 @@
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import jit, lax
+from jax import jit, lax, random
 from diffrax import diffeqsolve, ODETerm, Euler, Dopri5, SaveAt, PIDController
 import optax 
 import pandas as pd 
@@ -292,6 +292,9 @@ if __name__ == '__main__':
     n_devices = jax.local_device_count()
     print(n_devices)
 
+    # seed control
+    key = random.PRNGKey(44)
+
     # MPC setting
     PH = 48
     CH = 1
@@ -340,13 +343,18 @@ if __name__ == '__main__':
     # initial state for rc zone
     state = jnp.array([20, 27.21, 26.76])
     
+    # initialize random seeds for noises in measurements
+    keys = random.split(key, int((te-ts)/dt))
+    mu_noise = 0.1
+
     # initialize output 
     u_opt  = []
     Tz_opt = []
     To_opt = []
-    
+    Tz_opt_pred = []
+
     # main loop
-    for t in range(ts, te, dt):
+    for i, t in enumerate(range(ts, te, dt)):
         
         # get disturbance
         dist_t_ph = get_disturbance_ph(dist, t, PH, dt)
@@ -378,10 +386,12 @@ if __name__ == '__main__':
         # control signal applied
         u_opt.append(float(u_ch))
 
-        # measurements
-        Tz_opt.append(float(state[0]))
+        # measurements with noises
+        Tz_opt_pred.append(float(state[0]))
+        Tz_opt.append(float(state[0] + mu_noise*random.normal(keys[i])))
         To_opt.append(float(dist_t[0,0]))
-    
+
+    ### POST-PROCESS
     # plot some figures
     # process prices 24 -> 96 in this case
     price_dt = price.reshape(-1,1)
@@ -389,7 +399,6 @@ if __name__ == '__main__':
         price_dt = jnp.concatenate((price_dt, price.reshape(-1,1)), axis=1)
     price_dt = jnp.repeat(price_dt.reshape(1,-1), ndays, axis=0).reshape(-1,1)
  
-
     # temp bounds
     T_ub = mpc.T_ub
     T_lb = mpc.T_lb
