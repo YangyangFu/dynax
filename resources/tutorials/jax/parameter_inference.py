@@ -2,13 +2,14 @@ import jax
 import jax.numpy as jnp
 import pandas as pd 
 import numpy as np
-from jax import jit
+from jax import jit, lax
 from jax import grad
 from diffrax import diffeqsolve, ODETerm, Euler, Dopri5, SaveAt, PIDController
 import optax 
 import matplotlib.pyplot as plt
 import time 
 import json
+from functools import partial 
 
 n_devices = jax.local_device_count()
 print(n_devices)
@@ -61,7 +62,10 @@ def zone_state_space(t, x, A, B, d):
 
     return dx
 
-## Using for loop to update the disturbance every time step
+# Using for loop to update the disturbance every time step
+
+
+@partial(jit, static_argnums=(0, 1, 2, 3,))
 def forward(func, ts, te, dt, x0, solver, args):
     # unpack args
     A, B, d = args
@@ -70,36 +74,43 @@ def forward(func, ts, te, dt, x0, solver, args):
     term = ODETerm(func)
 
     # initial step
-    tprev = ts
-    tnext = ts + dt 
-    dprev = d[0,:]
+    t = ts
+    tnext = t + dt
+    dprev = d[0, :]
     args = (A, B, dprev)
-    state = solver.init(term, tprev, tnext, x0, args)
+    state = solver.init(term, t, tnext, x0, args)
 
     # initialize output
-    t_all = [tprev]
-    x_all = jnp.array([x0])
+    #t_all = [t]
+    #x_all = [x0]
 
     # main loop
     i = 0
-    x = x0
+    #x = x0
 
-    while tprev < te - dt:
-        x, _, _, state, _ = solver.step(term, tprev, tnext, x, args, state, made_jump=False)
-        tprev = tnext 
-        tnext = min(tprev + dt, te)
+    # jit-ed scan to replace while loop
+#    cond_func = lambda t: t < te
+    def step_at_t(carryover, t, term, dt, te, A, B, d):
+        # the lax.scannable function to computer ODE/DAE systems
+        x = carryover[0]
+        state = carryover[1]
+        i = carryover[2]
+        args = (A, B, d[i, :])
+        tnext = jnp.minimum(t + dt, te)
 
-        # update disturbance for next step
+        xnext, _, _, state, _ = solver.step(
+            term, t, tnext, x, args, state, made_jump=False)
         i += 1
-        dnext = d[i,:]
-        args = (A,B,dnext)
 
-        # append results
-        t_all.append(tnext)
-        x_att = x.reshape(1,-1)
-        x_all = jnp.concatenate([x_all, x_att], axis=0)
-    
-    return t_all, x_all 
+        return (xnext, state, i), x
+
+    carryover_init = (x0, state, i)
+    step_func = partial(step_at_t, term=term, dt=dt, te=te, A=A, B=B, d=d)
+    time_steps = np.arange(ts, te+1, dt)
+    carryover_final, x_all = lax.scan(
+        step_func, init=carryover_init, xs=time_steps)
+
+    return time_steps, x_all
 
 
 ### Parameter Inference
@@ -147,7 +158,7 @@ model = lambda p,x: forward_parameters(p, x, ts, te, dt, solver, d)
 # loss function
 def loss_fcn(p, x, y_true):
     _, y_pred = model(p, x)
-    loss = jnp.mean((y_pred[:,0] - y_true)**2)
+    loss = jnp.mean((y_pred[1:,0] - y_true)**2)
 
     return loss
 
@@ -195,28 +206,29 @@ def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransform
         updates, states = optimizer.update(grads, states, params)
         params = optax.apply_updates(params, updates)
 
-        return params, states, loss
+        return params, states, loss, grads
     
     for epoch in range(n_epochs):
-        params, states, loss = step(params, states, x, y)
+        params, states, loss, grads = step(params, states, x, y)
         if epoch % 10 == 0:
             print(f'epoch {epoch}, training loss: {loss}')
-    
+            print(grads['rc'].max(), grads['rc'].min())
+
     return params
 
-lr = 0.1
-n_epochs = 2620
+lr = 0.01
+n_epochs = 5000
 schedule = optax.exponential_decay(
-    init_value = 0.01, 
-    transition_steps = 5000, 
+    init_value = 0.03, 
+    transition_steps = 1000, 
     decay_rate = 0.99, 
     transition_begin=0, 
     staircase=False, 
-    end_value=1e-08
+    end_value=1e-05
 )
 optimizer = optax.chain(
-    #optax.clip_by_global_norm(1e-05),
-    optax.adam(learning_rate = schedule)
+    optax.clip(0.01),
+    optax.adamw(learning_rate = schedule)
 )
 
 initial_params = {'rc': p0}
@@ -226,4 +238,4 @@ print(params)
 # save the parameters
 params_tolist = [float(p) for p in params['rc']]
 with open('zone_coefficients.json', 'w') as f:
-    json.dump(params,f)
+    json.dump(params_tolist,f)
