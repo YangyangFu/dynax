@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 import pandas as pd 
 import numpy as np
-from jax import jit, lax
+from jax import jit, lax, vmap
 from jax import grad
 from diffrax import diffeqsolve, ODETerm, Euler, Dopri5, SaveAt, PIDController
 import optax 
@@ -132,20 +132,70 @@ dt = 3600
 data = data.groupby([data.index // dt]).mean()
 n = len(data)
 
+# prepare data for multi-step errors minimization
+# for example, we can reduce the 24-step-ahead errors.
+# For this purpose, we need prepare a dataset that has a size of (Nsample, 1+N+Nd) 
+# Current dataset: 0-4th columns are disturbances to RC zone model, 5th column is the target -> zone temperature
+# Three type of data
+# - for state x:
+#   construct an array of (B, Ns)
+# - for disturbance d
+#   construct an array of (B, Nd, Nq)
+# - for prediction targets y - future temperature
+#   construct an array of (B, Nq) 
+# TODO: implement pytorch-like data loader to get batched data
+
+N_q = 24 # future steps for predictions
+N_s = 3 # number of states
+N_d = 5 # number of disturbances
+target = data.iloc[:,-1].values
+dist = data.iloc[:,:N_d].values # first N_d columns
+
+SEQUENCE_LENGTH = n - (N_q+1)
+target_batched = []
+dist_batched = []
+for i in range(SEQUENCE_LENGTH):
+    # get (x, d, y) for each step
+    target_i = target[i:i+N_q+1]
+    dist_i = dist[i:i+N_q, :]
+    # append for batched data
+    target_batched.append(target_i) # (B, 1+Nq)
+    dist_batched.append(dist_i) # (B, (Nq, Nd)
+
+target_batch = np.array(target_batched)
+dist_batch = np.array(dist_batched)
+x_init_batch = target_batch[:,0]
+y_batch = target_batch[:,1:]
+
+print(target_batch.shape)
+print(dist_batch.shape)
+print(x_init_batch.shape)
+print(y_batch.shape)
+
+def split_data(data, train_ratio=0.7):
+    x_init, dist, y = data 
+    print(x_init.shape, dist.shape, y.shape)
+    n = len(x_init)
+    n_train = int(n*train_ratio)
+    return (x_init[:n_train, :], dist[:n_train, :, :], y[:n_train, :]), (x_init[n_train:, :], dist[n_train:, :, :], y[n_train:, :])
+
 # split training and testing
 ratio = 0.75
-n_train = int(len(data)*ratio)
-print(n_train)
-data_train = data.iloc[:n_train, :]
-data_test = data.iloc[n_train:, :]
+#n_train = int(len(data)*ratio)
+#print(n_train)
+#data_train = data[:n_train, :]
+#data_test = data[n_train:, :]
+data_train, data_test = split_data((x_init_batch, dist_batch, y_batch), ratio)
 
 # define training parameters 
 ts = 0
-te = ts + n_train*dt
+te = ts + N_q*dt
 solver = Euler()
 
+## The following functions are defined without batch information
+## We can use vmap to apply batch calculation to these functions
 # forward steps
-f = lambda t, x, args: zone_state_space(t, x, *args)#args[0], args[1], args[2]) 
+f = lambda t, x, args: zone_state_space(t, x, *args) #args[0], args[1], args[2]) 
 def forward_parameters(p, x, ts, te, dt, solver, d):
     """
     p is [Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0]
@@ -174,29 +224,6 @@ def loss_fcn(p, x, y_true, p_lb, p_ub):
 
     return loss + penalty
 
-# data preparation
-d = data_train.values[:,:5]
-y_train = data_train.values[:,5]
-
-"""
-# A naive gradient descent implementation
-# update 
-@jit 
-def update(p, x, y_true, lr = 0.1):
-    return p - lr*jax.grad(loss_fcn)(p, x, y_true)
-
-for i in range(nepochs):
-    p = update(p, x0, y_train, lr)
-
-    if i % 100 == 0:
-        print(f"======= epoch: {i}")
-        loss = loss_fcn(p, x0, y_train)
-        print(f" training loss is: {loss}")
-
-print(p)
-print(loss_fcn(p, x0, y_train))
-"""
-
 def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransformation, p_lb, p_ub) -> optax.Params:
     # initialize params
     states = optimizer.init(params)
@@ -224,12 +251,26 @@ p_lb = jnp.array([1.0E3, 1.0E4, 1.0E5, 1.0, 1E-02, 1.0, 1.0E-1, 20.0, 20.0])
 p_ub = jnp.array([1.0E5, 1.0E6, 1.0E7, 10., 10., 100., 10., 35.0, 30.0])
 
 #p0 = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394, 1.1442776918411255, 5.741048812866211, 34.82638931274414, 26.184139251708984])
+# play a bit to check the model
+x_init_train, dist_train, y_train = data_train
+x_init_test, dist_test, y_test = data_test
 
+# single sample
 p0 = p_ub
-x0 = y_train[0]
+x0 = x_init_train[0]
+d0 = dist_train[0, :, :]
+y0 = y_train[0,:]
+print(x0.shape, d0.shape, y0.shape)
 print(p0, x0)
-print(loss_fcn({'rc':p0}, x0, y_train, p_lb, p_ub))
+print(model({'rc':p0}, x0))
+print(loss_fcn({'rc':p0}, x0, y_train[:N_q], p_lb, p_ub))
 
+# batch sample
+x0 = y_train[0:2].reshape(2, 1)
+print(x0.shape)
+print(vmap(model, in_axes=(None, 0))({'rc': p0}, x0))
+
+# start to train
 n_epochs = 100000
 schedule = optax.exponential_decay(
     init_value = 0.1, 
