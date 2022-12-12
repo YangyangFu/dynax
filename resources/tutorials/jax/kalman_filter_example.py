@@ -15,7 +15,6 @@ class LTISystem(eqx.Module):
     B: jnp.ndarray
     C: jnp.ndarray
 
-
 def harmonic_oscillator(damping: float = 0.0, time_scaling: float = 1.0) -> LTISystem:
     A = jnp.array([[0.0, time_scaling], [-time_scaling, -2 * damping]])
     B = jnp.array([[0.0], [1.0]])

@@ -32,10 +32,14 @@ This repo implements a differentiable simulator for building energy systems to s
 ## Deterministic Parameter Inference
 
 ## Bayesian Inference
+- Probablistic Programming 
+- Bayesian calibration
+- Bayesian optimization -> for control what is this?
 
-## MPC
+## MPC -> stotistical MPC
 
 ## Model-based DRL
+
 
 
 # Contact

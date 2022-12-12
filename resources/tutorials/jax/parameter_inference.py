@@ -255,8 +255,11 @@ ts = 0
 te = ts + n*dt
 d = data.values[:, :5]
 y = data.values[:, 5]
+forward_ts = time.time()
 model = lambda p,x: forward_parameters(p, x, ts, te, dt, solver, d)
 t_pred, ys_pred = model(params, x0)
+forward_te = time.time()
+print(f"single forward simulation costs {forward_te-forward_ts} s!")
 y_pred = ys_pred[:,0]
 
 print(t_pred.shape, y_pred.shape)
