@@ -1,16 +1,17 @@
+import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import jit
-from jax import grad
+from jax import jit, lax, random
 from diffrax import diffeqsolve, ODETerm, Euler, Dopri5, SaveAt, PIDController
 import optax 
 import pandas as pd 
 import numpy as np 
 import matplotlib.pyplot as plt 
 import json 
+from jax.tree_util import Partial
 
 class MPC():
-    def __init__(self, PH, CH, dt, predictor, price):
+    def __init__(self, PH: jnp.int16, CH:jnp.int16, dt:jnp.int16, predictor, price):
         self.PH = PH
         self.CH = CH
         self.dt = dt
@@ -45,8 +46,7 @@ class MPC():
 
         # optimization start points
         self.u_start = jnp.repeat(self.u_ub, self.PH).reshape(-1, 1)
-        print(self.u_start.shape)
-
+        
     # set methods 
     def set_time(self, time):
         self.time = time
@@ -98,7 +98,7 @@ class MPC():
         # call optimizer to minimize loss
         lr = 0.01
         tolerance = 1e-06
-        n_epochs = 1000
+        n_epochs = 5000
         optimizer = optax.adamw(learning_rate = lr)
         #u0 = jnp.zeros([self.PH, 1])
         u0 = self.u_start
@@ -113,18 +113,17 @@ class MPC():
         # terminatio conditions
         # this is very import to gradient-descent based MPC 
         # for building energy optimization, we expect 0 in the objective function. therefore we use obsolute error here
+        zone_model = self.predictor['zone_model']
+        ode_solver = self.ode_solver
+        u_ub = self.u_ub
+        u_lb = self.u_lb
+        PH = self.PH
+
         while epoch < n_epochs and loss > tolerance:
-            # get weights from previou step
-            u_ph = params['u']
+            params, opt_state, u_ph, loss, grads = _fit_step(
+                params, opt_state, state, ts, te, dt, disturbance, T_ub_ph, T_lb_ph, price_ph, zone_model, ode_solver, u_ub, u_lb, PH, optimizer)
 
-            # update weights
-            loss, grads = jax.value_and_grad(self.loss_mpc)(
-                params, state, ts, te, self.dt, disturbance, T_ub_ph, T_lb_ph, price_ph)
-            updates, opt_state = optimizer.update(grads, opt_state, params)
-            params = optax.apply_updates(params, updates)
-
-            #rel_error = jnp.abs(loss - loss_prev)/max(loss_prev, 1e-12)
-            if epoch % 10 == 0:
+            if epoch % 100 == 0:
                 print(f'epoch {epoch}, training loss: {loss}')
             #print(f'epoch {epoch}, training loss: {loss}, relative loss: {rel_error}')
 
@@ -135,42 +134,14 @@ class MPC():
 
         # control variable is qhvac
     def loss_mpc(self, params, state, ts, te, dt, disturbance, T_ub, T_lb, price):
-        u = params['u']
-        d = jnp.concatenate((disturbance[:,:2], u, disturbance[:, 3:]), axis=1)
-        T_vios = self.get_T_violations(state, ts, te, dt, d, T_ub, T_lb)
-        u_vios = self.get_u_violations(u)
+        zone_model = self.predictor['zone_model']
+        ode_solver = self.ode_solver
+        u_ub = self.u_ub 
+        u_lb = self.u_lb 
+        PH = self.PH
+        return _loss_mpc(params, state, ts, te, dt, disturbance, T_ub, T_lb, price, zone_model, ode_solver, u_ub, u_lb, PH)
 
-        obj = price*jnp.abs(u)*self.dt/3600 + T_vios + u_vios 
-        
-        return jnp.sum(obj)
-
-    def get_T_violations(self, state, ts, te, dt, disturbance, T_ub_ph, T_lb_ph):
-        # time 
-        time= self.time
-        # get zone model
-        Cai, Cwe, Cwi, Re, Ri, Rw, Rg = self.predictor['zone_model']
-        A, B, C, D = get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg)
-        args = (A, B, disturbance)
-
-        # solve zone state-space model
-        ts, xs = forward(f, ts, te, dt, state, self.ode_solver, args)
-
-        # zone temperature violations
-        Tz_ph = xs[:,0]
-        T_vio_ub_ph = jax.nn.relu(Tz_ph - T_ub_ph)
-        T_vio_lb_ph = jax.nn.relu(T_lb_ph - Tz_ph)
-        T_vios = T_vio_ub_ph.sum() + T_vio_lb_ph.sum()
-
-        return T_vios
-
-    def get_u_violations(self, u):
-        """
-        Bound control inputs to lower and upper limits
-        """
-        u_ub_ph = jnp.repeat(self.u_ub, self.PH)
-        return jnp.sum(jax.nn.relu(u - self.u_ub) + jax.nn.relu(self.u_lb - u))
-
-
+# some intermediate function for jit
 @jit
 def get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg):
     A = jnp.zeros((3, 3))
@@ -210,6 +181,7 @@ def zone_state_space(t, x, A, B, d):
 def f(t, x, args): return zone_state_space(t, x, *args)  # args[0], args[1], args[2])
 
 # Using for loop to update the disturbance every time step
+@Partial(jit, static_argnums=(0,1,2,3,))
 def forward(func, ts, te, dt, x0, solver, args):
     # unpack args
     A, B, d = args
@@ -218,37 +190,42 @@ def forward(func, ts, te, dt, x0, solver, args):
     term = ODETerm(func)
 
     # initial step
-    tprev = ts
-    tnext = ts + dt
+    t = ts
+    tnext = t + dt
     dprev = d[0, :]
     args = (A, B, dprev)
-    state = solver.init(term, tprev, tnext, x0, args)
+    state = solver.init(term, t, tnext, x0, args)
 
     # initialize output
-    t_all = [tprev]
-    x_all = jnp.array([x0])
+    #t_all = [t]
+    #x_all = [x0]
 
     # main loop
     i = 0
-    x = x0
-
-    while tprev < te:
-        x, _, _, state, _ = solver.step(
-            term, tprev, tnext, x, args, state, made_jump=False)
-        tprev = tnext
-        tnext = min(tprev + dt, te)
-
-        # update disturbance for next step
+    #x = x0
+    
+    # jit-ed scan to replace while loop
+#    cond_func = lambda t: t < te
+    def step_at_t(carryover, t, term, dt, te, A, B, d):
+        # the lax.scannable function to computer ODE/DAE systems
+        x = carryover[0]
+        state = carryover[1]
+        i = carryover[2]
+        args = (A, B, d[i,:])
+        tnext = jnp.minimum(t + dt, te)
+        
+        xnext, _, _, state, _ = solver.step(
+            term, t, tnext, x, args, state, made_jump=False)
         i += 1
-        dnext = d[i, :]
-        args = (A, B, dnext)
 
-        # append results
-        t_all.append(tnext)
-        x_att = x.reshape(1, -1)
-        x_all = jnp.concatenate([x_all, x_att], axis=0)
+        return (xnext, state, i), x
 
-    return t_all, x_all
+    carryover_init = (x0, state, i)    
+    step_func = Partial(step_at_t, term = term, dt = dt, te = te, A = A, B = B, d = d)
+    time_steps = np.arange(ts, te+1, dt)
+    carryover_final, x_all = lax.scan(step_func, init = carryover_init, xs = time_steps)
+
+    return time_steps, x_all 
 
 def get_disturbance_ph(disturbance, ts, PH, dt):
     """
@@ -256,13 +233,70 @@ def get_disturbance_ph(disturbance, ts, PH, dt):
     """
     return disturbance.loc[ts:ts+PH*dt-1, :]
 
+@Partial(jit, static_argnums=(2,3,4,13,))
+def _loss_mpc(params, state, ts, te, dt, disturbance, T_ub, T_lb, price, zone_model, ode_solver, u_ub, u_lb, PH):
+    u = params['u']
+    d = jnp.concatenate(
+        (disturbance[:, :2], u, disturbance[:, 3:]), axis=1)
+    T_vios = _get_T_violations(zone_model, ode_solver, state, ts, te, dt, d, T_ub, T_lb)
+    u_vios = _get_u_violations(u_ub, u_lb, PH, u)
+
+    obj = price*jnp.abs(u)*dt/3600 + T_vios + u_vios
+
+    return jnp.sum(obj)
+
+@Partial(jit, static_argnums=(3,4,5,))
+def _get_T_violations(zone_model, ode_solver, state, ts, te, dt, disturbance, T_ub_ph, T_lb_ph):
+
+    # get zone model
+    Cai, Cwe, Cwi, Re, Ri, Rw, Rg = zone_model#self.predictor['zone_model']
+    A, B, C, D = get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg)
+    args = (A, B, disturbance)
+
+    # solve zone state-space model
+    ts, xs = forward(f, ts, te, dt, state, ode_solver, args)
+
+    # zone temperature violations
+    Tz_ph = xs[:, 0]
+    T_vio_ub_ph = jax.nn.relu(Tz_ph - T_ub_ph)
+    T_vio_lb_ph = jax.nn.relu(T_lb_ph - Tz_ph)
+    T_vios = T_vio_ub_ph.sum() + T_vio_lb_ph.sum()
+
+    return T_vios
+
+@Partial(jit, static_argnums=2)
+def _get_u_violations(u_ub, u_lb, PH, u):
+    """
+    Bound control inputs to lower and upper limits
+    """
+    u_ub_ph = jnp.repeat(u_ub, PH)
+    u_lb_ph = jnp.repeat(u_lb, PH)
+    return jnp.sum(jax.nn.relu(u - u_ub_ph) + jax.nn.relu(u_lb_ph - u))
+
+# this function cannot be jitted as its current format
+@Partial(jit, static_argnums=(3,4,5,11,14,15))
+def _fit_step(params, opt_state, state, ts, te, dt, disturbance, T_ub_ph, T_lb_ph, price_ph, zone_model, ode_solver, u_ub, u_lb, PH, optimizer):
+    u_ph = params['u']
+
+    # update weights
+    loss, grads = jax.value_and_grad(_loss_mpc)(
+        params, state, ts, te, dt, disturbance, T_ub_ph, T_lb_ph, price_ph, zone_model, ode_solver, u_ub, u_lb, PH)
+    updates, opt_state = optimizer.update(grads, opt_state, params)
+    params = optax.apply_updates(params, updates)
+
+    return params, opt_state, u_ph, loss, grads
+
+
 if __name__ == '__main__':
     print(jax.devices())
     n_devices = jax.local_device_count()
     print(n_devices)
 
+    # seed control
+    key = random.PRNGKey(44)
+
     # MPC setting
-    PH = 24
+    PH = 48
     CH = 1
     dt = 900
     nsteps_per_hour = int(3600 / dt)
@@ -282,7 +316,8 @@ if __name__ == '__main__':
 
     # Experiment settings
     ts = 195*24*3600
-    te = 1*24*3600 + ts
+    ndays = 7
+    te = ndays*24*3600 + ts
 
     # get predictor
     predictor = {}
@@ -308,12 +343,18 @@ if __name__ == '__main__':
     # initial state for rc zone
     state = jnp.array([20, 27.21, 26.76])
     
+    # initialize random seeds for noises in measurements
+    keys = random.split(key, int((te-ts)/dt))
+    mu_noise = 0.2
+
     # initialize output 
     u_opt  = []
     Tz_opt = []
     To_opt = []
+    Tz_opt_pred = []
+
     # main loop
-    for t in range(ts, te, dt):
+    for i, t in enumerate(range(ts, te, dt)):
         
         # get disturbance
         dist_t_ph = get_disturbance_ph(dist, t, PH, dt)
@@ -345,16 +386,19 @@ if __name__ == '__main__':
         # control signal applied
         u_opt.append(float(u_ch))
 
-        # measurements
-        Tz_opt.append(float(state[0]))
+        # measurements with noises
+        Tz_opt_pred.append(float(state[0]))
+        Tz_opt.append(float(state[0] + mu_noise*random.normal(keys[i])))
         To_opt.append(float(dist_t[0,0]))
 
+    ### POST-PROCESS
     # plot some figures
     # process prices 24 -> 96 in this case
     price_dt = price.reshape(-1,1)
     for step in range(nsteps_per_hour-1):
         price_dt = jnp.concatenate((price_dt, price.reshape(-1,1)), axis=1)
-    
+    price_dt = jnp.repeat(price_dt.reshape(1,-1), ndays, axis=0).reshape(-1,1)
+ 
     # temp bounds
     T_ub = mpc.T_ub
     T_lb = mpc.T_lb
@@ -363,21 +407,24 @@ if __name__ == '__main__':
     for step in range(nsteps_per_hour-1):
         T_ub_dt = jnp.concatenate((T_ub_dt, T_ub.reshape(-1, 1)), axis=1)
         T_lb_dt = jnp.concatenate((T_lb_dt, T_lb.reshape(-1, 1)), axis=1)
+    T_ub_dt = jnp.repeat(T_ub_dt.reshape(1,-1), ndays, axis=0).reshape(-1,1)
+    T_lb_dt = jnp.repeat(T_lb_dt.reshape(1,-1), ndays, axis=0).reshape(-1,1)
 
-    xticks = range(0,24*nsteps_per_hour, 6*nsteps_per_hour)
-    xticklabels = range(0, 24, 6)
+    xticks = range(0,24*nsteps_per_hour*ndays, 6*nsteps_per_hour)
+    xticklabels = range(0, 24*ndays, 6)
 
     plt.figure(figsize=(12,6))
     plt.subplot(3,1,1)
-    plt.plot(price_dt.flatten())
+    plt.plot(price_dt)
     plt.xticks(xticks,[])
     plt.ylabel("Energy Price ($/kWh)")
 
     plt.subplot(3,1,2)
-    plt.plot(Tz_opt, 'r-', label="Zone")
+    plt.plot(Tz_opt, 'r-', label="Zone Measurement")
     plt.plot(To_opt, 'b-', label="Outdoor")
-    plt.plot(T_ub_dt.flatten(), 'k--', label="Bound")
-    plt.plot(T_lb_dt.flatten(), 'k--')
+    plt.plot(T_ub_dt, 'k--', label="Bound")
+    plt.plot(T_lb_dt, 'k--')
+    plt.plot(Tz_opt_pred, 'r-.', label="Zone Prediction")
     plt.ylabel("Temperature (C)")
     plt.xticks(xticks, [])
     plt.legend()
@@ -386,13 +433,13 @@ if __name__ == '__main__':
     plt.plot(u_opt)
     plt.ylabel("Cooling Rate (kW)")
     plt.xticks(xticks, xticklabels)
-    plt.savefig('mpc.png')
+    plt.savefig("mpc_"+str(PH)+".png")
 
     # save some kpis
     energy_cost = jnp.sum(price_dt.flatten()*jnp.abs(jnp.array(u_opt))*dt/3600)
     energy = jnp.sum(jnp.abs(jnp.array(u_opt))*dt/3600)
-    dT_lb = jnp.maximum(0, T_lb_dt.flatten() - jnp.array(Tz_opt))
-    dT_ub = jnp.maximum(0, jnp.array(Tz_opt) - T_ub_dt.flatten())
+    dT_lb = jnp.maximum(0, T_lb_dt - jnp.array(Tz_opt).reshape(-1,1))
+    dT_ub = jnp.maximum(0, jnp.array(Tz_opt).reshape(-1,1) - T_ub_dt)
     dT_max = jnp.max(dT_lb + dT_ub)
     dTh = (jnp.sum(dT_lb) + jnp.sum(dT_ub))*dt/3600
 
@@ -402,5 +449,5 @@ if __name__ == '__main__':
     kpi['dT_max'] = float(dT_max)
     kpi['dTh'] = float(dTh)
 
-    with open("mpc_kpi.json", 'w') as file:
+    with open("mpc_kpi_"+str(PH)+".json", 'w') as file:
         json.dump(kpi, file)
