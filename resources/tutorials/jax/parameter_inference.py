@@ -1,8 +1,8 @@
 import os
 # Limit ourselves to single-threaded jax/xla operations to avoid thrashing. See
 # https://github.com/google/jax/issues/743.
-#os.environ["XLA_FLAGS"] = ("--xla_cpu_multi_thread_eigen=false "
-#                           "intra_op_parallelism_threads=1")
+os.environ["XLA_FLAGS"] = ("--xla_cpu_multi_thread_eigen=false "
+                           "intra_op_parallelism_threads=1")
 
 import jax
 import jax.numpy as jnp
@@ -19,7 +19,9 @@ from functools import partial
 import time 
 
 n_devices = jax.local_device_count()
-print(n_devices)
+print(n_devices) 
+print(jax.devices())
+
 # a simple RC zone model -> ODE system
 """
 This is a 4r3c model for zone temperature prediction
@@ -164,8 +166,10 @@ def forward_parameters(p, x, ts, te, dt, solver, d):
     return t, x 
 
 model = lambda p,x: forward_parameters(p, x, ts, te, dt, solver, d)
+model = jit(model)
 
 # loss function
+@jit
 def loss_fcn(p, x, y_true, p_lb, p_ub):
     _, y_pred = model(p, x)
     loss = jnp.mean((y_pred[1:,0] - y_true)**2)
@@ -177,6 +181,8 @@ def loss_fcn(p, x, y_true, p_lb, p_ub):
 # data preparation
 d = data_train.values[:,:5]
 y_train = data_train.values[:,5]
+d = jax.device_put(d)
+y_train=jax.device_put(y_train)
 
 """
 # A naive gradient descent implementation
@@ -226,7 +232,7 @@ p_ub = jnp.array([1.0E5, 1.0E6, 1.0E7, 10., 10., 100., 10., 35.0, 30.0])
 #p0 = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394, 1.1442776918411255, 5.741048812866211, 34.82638931274414, 26.184139251708984])
 
 p0 = p_ub
-x0 = y_train[0]
+x0 = jax.device_put(y_train[0])
 print(p0, x0)
 print(loss_fcn({'rc':p0}, x0, y_train, p_lb, p_ub))
 

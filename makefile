@@ -7,6 +7,7 @@ TAG_GPU = gpu
 TAG_JL = jl
 TAG_TAICHI = taichi
 TAG_JAX = jax 
+TAG_JAX_CUDA = jax-cuda 
 
 # some dockerfile
 DOCKERFILE_CPU = Dockerfile_CPU
@@ -14,6 +15,7 @@ DOCKERFILE_GPU = Dockerfile_GPU
 DOCKERFILE_JL = Dockerfile.jl
 DOCKERFILE_TAICHI = Dockerfile.taichi
 DOCKERFILE_JAX = Dockerfile.jax
+DOCKERFILE_JAX_CUDA = DockerfileCuda.jax
 
 #build:
 #	docker build --build-arg CONDA_VERSION=${CONDA_VERSION},CONDA_MD5=${CONDA_MD5} --no-cache --rm -t ${IMA_NAME} .
@@ -31,3 +33,6 @@ build_taichi:
 
 build_jax:
 	docker build -f ${DOCKERFILE_JAX} --no-cache --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JAX} .
+
+build_jax_cuda:
+	docker build -f ${DOCKERFILE_JAX_CUDA} --no-cache --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JAX_CUDA} .
