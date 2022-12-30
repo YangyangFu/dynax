@@ -82,7 +82,7 @@ def diffeqsolve(
     rhs,
     ts: jnp.ndarray,
     y0: jnp.ndarray,
-    solver: dfx.AbstractSolver = dfx.Dopri5(),
+    solver: dfx.AbstractSolver = dfx.Euler(),#dfx.Dopri5(),
     stepsize_controller: dfx.AbstractStepSizeController = dfx.ConstantStepSize(),
     dt0: float = 3600.,
 ) -> jnp.ndarray:
@@ -106,7 +106,7 @@ def forward_simulation(
     std_measurement_noise: float = 0.0,
     key=jr.PRNGKey(1),
     ):
-    sys = sys = zone_lti(*p)
+    sys = zone_lti(*p)
     u_t = interpolate_us(ts, us, sys.B)
 
     def rhs(t, y, args):
@@ -207,14 +207,14 @@ n_epochs = 10000
 print_every = 100
 schedule = optax.exponential_decay(
     init_value = 1e-01, 
-    transition_steps = 5000, 
+    transition_steps = 1000, 
     decay_rate = 0.99, 
     transition_begin=0, 
     staircase=False, 
     end_value=1e-06
 )
 optimizer = optax.chain(
-    optax.adam(learning_rate = schedule)
+    optax.adabelief(learning_rate = schedule)
 )
 
 

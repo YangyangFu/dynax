@@ -1,4 +1,5 @@
 docker run^
+    --gpus=all^
     --user=root^
     --detach=false^
     -v /tmp/.X11-unix:/tmp/.X11-unix^
