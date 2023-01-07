@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import time 
 import json
 import time 
+jax.config.update('jax_array', True)
 
 n_devices = jax.local_device_count()
 print(n_devices)

@@ -4,15 +4,20 @@ import os
 #os.environ["XLA_FLAGS"] = ("--xla_cpu_multi_thread_eigen=false "
 #                           "intra_op_parallelism_threads=1")
 import functools as ft
+from functools import partial 
 from types import SimpleNamespace
 from typing import Optional
 
 import diffrax as dfx
 import equinox as eqx  # https://github.com/patrick-kidger/equinox
+from flax import linen as nn
 import jax
+from jax import jit, lax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
+from diffrax import diffeqsolve, ODETerm, Euler, Dopri5, SaveAt, PIDController
+
 import matplotlib.pyplot as plt
 import optax  # https://github.com/deepmind/optax
 import time 
@@ -65,231 +70,276 @@ def get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg):
 
     return A, B, C, D
 
-class LTISystem(eqx.Module):
-    A: jnp.array
-    B: jnp.array
-    C: jnp.array
+@jit
+def zone_state_space(t, x, A, B, u):
+    x = x.reshape(-1, 1)
+    d = d.reshape(-1, 1)
+    dx = jnp.matmul(A, x) + jnp.matmul(B, d)
+    dx = dx.reshape(-1)
 
-def zone_temperature(A,B,C,D) -> LTISystem:
-    return LTISystem(A,B,C)
+    return dx
 
-def interpolate_us(ts, us, B):
-    if us is None:
-        m = B.shape[-1]
-        u_t = SimpleNamespace(evaluate=lambda t: jnp.zeros((m,)))
-    else:
-        u_t = dfx.LinearInterpolation(ts=ts, ys=us)
-    return u_t
+@jit
+def continuous_kmf(t, xP, A, B, C, Q, R, u, z):
+    # extract states
+    x, P = xP
+    
+    # eq 3.22 of Ref [1]
+    K = P @ C.transpose() @ jnp.linalg.inv(R)
 
+    # eq 3.21 of Ref [1]
+    dPdt = (
+        A @ P
+        + P @ A.transpose()
+        + Q
+        - P @ C.transpose() @ jnp.linalg.inv(R) @ C @ P
+    )
 
-def diffeqsolve(
-    rhs,
-    ts: jnp.ndarray,
-    y0: jnp.ndarray,
-    solver: dfx.AbstractSolver = dfx.Dopri5(),
-    stepsize_controller: dfx.AbstractStepSizeController = dfx.ConstantStepSize(compile_steps=False),
-    dt0: float = 3600.,
-) -> jnp.ndarray:
-    return dfx.diffeqsolve(
-        dfx.ODETerm(rhs),
-        solver=solver,
-        stepsize_controller=stepsize_controller,
-        t0=ts[0],
-        t1=ts[-1],
-        y0=y0,
-        dt0=dt0,
-        saveat=dfx.SaveAt(ts=ts),
-    ).ys
+    # eq 3.23 of Ref [1]
+    dxdt = A @ x + B @ u + K @ (z - C @ x)
 
-def simulate_lti_system(
-    sys: LTISystem,
-    y0: jnp.ndarray,
-    ts: jnp.ndarray,
-    us: Optional[jnp.ndarray] = None,
-    std_measurement_noise: float = 0.0,
-    dt0: float = 3600.,
-    key=jr.PRNGKey(
-        1,
-    ),
-):
-    u_t = interpolate_us(ts, us, sys.B)
+    return (dxdt, dPdt)
 
-    def rhs(t, y, args):
-        return sys.A @ y + sys.B @ u_t.evaluate(t)
+# Using for loop to update the disturbance every time step
+# forward function that simulates ODE given time period and inputs
+@partial(jit, static_argnums=(0, 1, 2, 3,))
+def forward(func, ts, te, dt, xP0, solver, args):
+    # unpack args:
+    # A, B, C: system dynamics coefficents
+    # Q, R: variance of modeling errors and measurement noise
+    # u: control inputs and disturbances
+    # z: measurements
+    A, B, C, Q, R, u, z = args
 
-    xs = diffeqsolve(rhs, ts, y0, dt0=dt0)
-    # noisy measurements
-    ys = xs @ sys.C.transpose()
-    ys = ys + jr.normal(key, shape=ys.shape) * std_measurement_noise
-    return xs, ys
+    # ode formulation
+    term = ODETerm(func)
 
-class KalmanFilter(eqx.Module):
-    """Continuous-time Kalman Filter
+    # initial step
+    t = ts
+    tnext = t + dt
+    u0 = u[0, :]
+    z0 = z[0, :]
+    args = (A, B, C, Q, R, u0, z0)
+    
+    # helper function
+    def step_at_t(carryover, t, term, dt, te, A, B, C, Q, R, u, z):
+        # the lax.scannable function to computer ODE/DAE systems
+        xP, state, i = carryover
+        args = (A, B, C, Q, R, u[i, :], z[i, :])
+        tnext = jnp.minimum(t + dt, te)
 
-    Ref:
-        [1] Optimal and robust estimation. 2nd edition. Page 154.
-        https://lewisgroup.uta.edu/ee5322/lectures/CTKalmanFilterNew.pdf
-    """
+        xPnext, _, _, state, _ = solver.step(
+            term, t, tnext, xP, args, state, made_jump=False)
+        i += 1
 
-    sys: LTISystem
-    x0: jnp.ndarray
-    P0: jnp.ndarray
-    Q: jnp.ndarray
-    R: jnp.ndarray
+        return (xPnext, state, i), xP
+    
+    # main loop
+    state0 = solver.init(term, t, tnext, xP0, args)
+    i = 0
+    carryover_init = (xP0, state0, i)
+    step_func = partial(step_at_t, term=term, dt=dt, te=te, A=A, B=B, C=C, Q=Q, R=R, u=u, z=z)
+    time_steps = jnp.arange(ts, te+1, dt)
+    carryover_final, xP_all = lax.scan(
+        step_func, init=carryover_init, xs=time_steps)
 
-    def __call__(self, ts, ys, us: Optional[jnp.ndarray] = None):
+    return time_steps, xP_all
 
-        A, B, C = self.sys.A, self.sys.B, self.sys.C
-
-        y_t = dfx.LinearInterpolation(ts=ts, ys=ys)
-        u_t = interpolate_us(ts, us, B)
-
-        y0 = (self.x0, self.P0)
-        
-        def rhs(t, y, args):
-            x, P = y
-
-            # eq 3.22 of Ref [1]
-            K = P @ C.transpose() @ jnp.linalg.inv(self.R)
-
-            # eq 3.21 of Ref [1]
-            dPdt = (
-                A @ P
-                + P @ A.transpose()
-                + self.Q
-                - P @ C.transpose() @ jnp.linalg.inv(self.R) @ C @ P
-            )
-
-            # eq 3.23 of Ref [1]
-            dxdt = A @ x + B @ u_t.evaluate(t) + K @ (y_t.evaluate(t) - C @ x)
-
-            return (dxdt, dPdt)
-
-        return diffeqsolve(rhs, ts, y0)[0]
-
-### Parameter Inference
+"""
+### A single forward pass test
+### ==============================================
 # load training data - 1-min sampling rate
 data = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
 index = range(0, len(data)*60, 60)
 data.index = index
 
 # sample every hour
-dt = 3600
+dt = 3600.
 data = data.groupby([data.index // dt]).mean()
 n = len(data)
 
 # split training and testing
-ratio = 0.75
+ratio = 0.1
 n_train = int(len(data)*ratio)
 print(n_train)
 data_train = data.iloc[:n_train, :]
 data_test = data.iloc[n_train:, :]
 
-us = jnp.array(data_train.iloc[:n_train+1,:5].values)
+us_train = jnp.array(data_train.iloc[:n_train+1,:5].values)
 #us = None 
 
 # define training parameters 
-Tz_0 = data_train.iloc[0,-1]
-ts = jnp.arange(0.0, n_train*3600, 3600.)
-print(ts.shape)
-print(us.shape)
+ys_train = jnp.array(data_train.iloc[:, -1].values).reshape(-1,1)
 
-p0 = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394,
-               1.1442776918411255, 5.741048812866211])
-A, B, C, D = get_ABCD(*p0)
-sys_true = zone_temperature(A,B,C,D)
-sys_true_x0 = jnp.array([Tz_0, 34.82638931274414, 26.184139251708984])
-sys_true_std_measurement_noise = 1.0
-
-xs, ys = simulate_lti_system(
-    sys_true, sys_true_x0, ts, us, std_measurement_noise=sys_true_std_measurement_noise, dt0 = dt
-)
-
-# system model -> here we use perfect model. It should not be perfect in practice
-sys_model = sys_true 
-# initial state guss -> its not perfect 
-sys_model_x0 = jnp.array([20.0, 24.0, 22.0])
-
-## TODO: Why large P0 leads to NANs in the first step?
-# seems big Q leads to NANs
-# weighs how much we trust our model of the system
-Q=jnp.diag(jnp.ones((3,))) * 0.
-# weighs how much we trust in the measurements of the system
-R=jnp.diag(jnp.ones((1,)))
+# test forward function
+kmf = lambda t, xP, args: continuous_kmf(t, xP, *args)
+ts = 0
+te = n_train*3600 #14*24*3600
+x0 = jnp.array([20.0, 35.0, 26.0])
 # weighs how much we trust our initial guess: if we know the exact position and velocity, we give it a zero covariance matrix
-P0=jnp.diag(jnp.ones((3,))) * 0.0001
-print(P0)
-kmf = KalmanFilter(sys_model, sys_model_x0, P0, Q, R)
-print(f"Initial Q: \n{kmf.Q}\n Initial R: \n{kmf.R}")
-#print(ts.shape, ys.shape, us.shape)
-#dxdt = kmf(ts, ys, us)
-#print(dxdt)
+P0 = jnp.diag(jnp.ones((3,)))*0.1
+xP0 = (x0, P0)
+solver = Euler()
+RC = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394,
+                     1.1442776918411255, 5.741048812866211])
+A, B, C, D = get_ABCD(*RC)
+# weighs how much we trust our model of the system
+Q = jnp.diag(jnp.ones((3,)))*1e-05
+# weighs how much we trust in the measurements of the system
+R = jnp.diag(jnp.ones((1,)))*10000
+args = (A, B, C, Q, R, us_train, ys_train)
+forward_ts = time.time()
+t, xP = forward(kmf, ts, te, dt, xP0, solver, args)
+forward_te = time.time()
+print(f"single forward simulation costs {forward_te-forward_ts} s!")
+print(t.shape)
+print(xP)
+"""
 
-# gradients should only be able to change Q/R parameters
-# *not* the model (well at least not in this example :)
-filter_spec = jtu.tree_map(lambda arr: False, kmf)
-filter_spec = eqx.tree_at(
-    lambda tree: (tree.Q, tree.R), filter_spec, replace=(True, True)
-)
+# load training data - 1-min sampling rate
+data = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
+index = range(0, len(data)*60, 60)
+data.index = index
 
-@eqx.filter_jit
-@ft.partial(eqx.filter_value_and_grad, arg=filter_spec)
-def loss_fn(kmf, ts, ys, us, xs):
-    xhats = kmf(ts, ys, us)
-    return jnp.mean((xs - xhats) ** 2)
+# sample every hour
+dt = 3600.
+data = data.groupby([data.index // dt]).mean()
+n = len(data)
 
-n_gradient_steps = 2000
-print_every = 100 
+# split training and testing
+ratio = 0.1
+n_train = int(len(data)*ratio)
+print(n_train)
+data_train = data.iloc[:n_train, :]
+data_test = data.iloc[n_train:, :]
 
+us_train = jnp.array(data_train.iloc[:n_train+1,:5].values)
+#us = None 
+
+# define training parameters 
+ys_train = jnp.array(data_train.iloc[:, -1].values).reshape(-1,1)
+
+# test forward function
+kmf = lambda t, xP, args: continuous_kmf(t, xP, *args)
+ts = 0
+te = n_train*3600 #14*24*3600
+solver = Euler()
+RC = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394,
+                     1.1442776918411255, 5.741048812866211])
+A, B, C, D = get_ABCD(*RC)
+
+# some initials
+x0 = jnp.array([20.0, 35.0, 26.0])
+P0 = jnp.diag(jnp.ones((3,)))
+xP0 = (x0, P0)
+
+# weighs how much we trust our model of the system
+Q0 = jnp.diag(jnp.ones((3,)))*1e-05
+# weighs how much we trust in the measurements of the system
+R0 = jnp.diag(jnp.ones((1,)))*100000
+
+# real measurement with noise
+std_measurement_noise = 1
+key = jr.PRNGKey(1,)
+ys_train_noise = ys_train + \
+    jr.normal(key, shape=ys_train.shape) * std_measurement_noise
+
+# some functions
+### parameter inference
+### ====================
+# create function to faciliate the simulation of kalman filter with different Q and R
+def forward_parameters(p, xP0, ts, te, dt, solver, args):
+    """
+    p is [Q, R]
+    x is Tz0
+    """
+    Q, R = p['qr']
+    A, B, C, u, z = args
+    args1 = (A, B, C, Q, R, u, z)
+
+    # forward calculation
+    t, xP = forward(kmf, ts, te, dt, xP0, solver, args1)
+
+    return t, xP
+
+args = (A, B, C, us_train, ys_train_noise)
+def model(p, xP0): return forward_parameters(p, xP0, ts, te, dt, solver, args)
+
+model = jit(model)
+
+@jit
+def loss_fn(params, xP0, y_true):
+    _, xP_pred = model(params, xP0) # y_meas is used in this model to construct y_esti
+    y_esti = xP_pred[0]  # get zone temperature state
+    P_esti = xP_pred[1]
+    loss = jnp.mean((y_esti[1:, 0] - y_true)**2)
+
+    penality = 0  # jnp.linalg.norm(P_pred)
+    return loss + penality
+
+
+def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransformation) -> optax.Params:
+    # initialize params
+    states = optimizer.init(params)
+    x, y = data
+
+    @jit
+    def step(params, states, x, y):
+        loss, grads = jax.value_and_grad(loss_fn)(params, x, y)
+        updates, states = optimizer.update(grads, states, params)
+        params = optax.apply_updates(params, updates)
+
+        return params, states, loss, grads
+
+    for epoch in range(n_epochs):
+        params, states, loss, grads = step(params, states, x, y)
+        if epoch % 1000 == 0:
+            print(f'epoch {epoch}, training loss: {loss}')
+            #print(grads['rc'].max(), grads['rc'].min())
+
+    return params
+
+
+# test loss function
+print(loss_fn({'qr':(Q0, R0)}, xP0, ys_train))
+
+n_epochs = 500000
 schedule = optax.exponential_decay(
-    init_value = 1e-9, 
-    transition_steps = 1000, 
+    init_value = 1e-6, 
+    transition_steps = 50000, 
     decay_rate = 0.99, 
-    transition_begin=0, 
+    transition_begin=100000, 
     staircase=False, 
-    end_value=1e-12
+    end_value=1e-8
+)
+optimizer = optax.chain(
+    optax.adabelief(learning_rate = 1e-06)
 )
 
-opt = optax.chain(
-    optax.adabelief(learning_rate = schedule)
-)
-opt_state = opt.init(kmf)
-
-for step in range(n_gradient_steps):
-    value, grads = loss_fn(kmf, ts, ys, us, xs)
-    if step % print_every == 0:
-        print(f"Current MSE at step {step} is {value} !!")
-    updates, opt_state = opt.update(grads, opt_state, kmf)
-    kmf = eqx.apply_updates(kmf, updates)
-
-print(f"Final Q: \n{kmf.Q}\n Final R: \n{kmf.R}")
+initial_params = {'qr': (Q0, R0)}
+s = time.time()
+params = fit((xP0, ys_train_noise), n_epochs, initial_params, optimizer)
+e = time.time()
+print(f"execution time is: {e-s} seconds !")
+print(f"Final Q: \n{params['qr'][0]}\n Final R: \n{params['qr'][1]}")
 
 ## PLOTS
 
-xhats = kmf(ts, ys, us)
-plt.plot(ts, xs[:, 0], label="true zone", color="orange")
+t, xPhat = model(params, xP0)
+plt.plot(t[1:], ys_train, label="true", color="orange")
 plt.plot(
-    ts,
-    xhats[:, 0],
-    label="estimated zone temp",
+    t,
+    xPhat[0][:, 0],
+    label="estimated",
     color="orange",
     linestyle="dashed",
 )
-plt.plot(ts, xs[:, 1], label="true wall out", color="blue")
 plt.plot(
-    ts,
-    xhats[:, 1],
-    label="estimated wall out",
-    color="blue",
-    linestyle="dashed",
-)
-plt.plot(ts, xs[:, 2], label="true wall in", color="red")
-plt.plot(
-    ts,
-    xhats[:, 2],
-    label="estimated wall in",
-    color="red",
-    linestyle="dashed",
+    t[1:],
+    ys_train_noise,
+    label="measured",
+    color='orange',
+    linestyle='dotted',
 )
 
 plt.xlabel("time")
