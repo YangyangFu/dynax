@@ -71,15 +71,6 @@ def get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg):
     return A, B, C, D
 
 @jit
-def zone_state_space(t, x, A, B, u):
-    x = x.reshape(-1, 1)
-    d = d.reshape(-1, 1)
-    dx = jnp.matmul(A, x) + jnp.matmul(B, d)
-    dx = dx.reshape(-1)
-
-    return dx
-
-@jit
 def continuous_kmf(t, xP, A, B, C, Q, R, u, z):
     # extract states
     x, P = xP

@@ -6,6 +6,7 @@ import os
 
 import jax
 import jax.numpy as jnp
+import tensorflow as tf
 import pandas as pd 
 import numpy as np
 from jax import jit, lax, vmap
@@ -61,67 +62,79 @@ def get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg):
     return A, B, C, D
 
 @jit
-def zone_state_space(t, x, A, B, d):
-    x = x.reshape(-1, 1)
-    d = d.reshape(-1, 1)
-    dx = jnp.matmul(A, x) + jnp.matmul(B, d)
-    dx = dx.reshape(-1)
+def continuous_kmf(t, xP, A, B, C, Q, R, u, z):
+    # extract states
+    x, P = xP
 
-    return dx
+    # eq 3.22 of Ref [1]
+    K = P @ C.transpose() @ jnp.linalg.inv(R)
+
+    # eq 3.21 of Ref [1]
+    dPdt = (
+        A @ P
+        + P @ A.transpose()
+        + Q
+        - P @ C.transpose() @ jnp.linalg.inv(R) @ C @ P
+    )
+
+    # eq 3.23 of Ref [1]
+    dxdt = A @ x + B @ u + K @ (z - C @ x)
+
+    return (dxdt, dPdt)
 
 # Using for loop to update the disturbance every time step
-
-
+# forward function that simulates ODE given time period and inputs with only one sample of data so that we can parallize using vmap
+# simulate with 
 @partial(jit, static_argnums=(0, 1, 2, 3,))
-def forward(func, ts, te, dt, x0, solver, args):
-    # unpack args
-    A, B, d = args
+def forward(kmf, zone, ts, te, dt, solver, args):
+    """
+    1. use kalman filter to estimate initial states
+    2. calculate future system dynamics based on system model instead of kalman filter dynamics
+    """
+    
+    # unpack args:
+    # A, B, C: system dynamics coefficents
+    # Q, R: variance of modeling errors and measurement noise
+    # u: control inputs and disturbances
+    # z: measurements
+    A, B, C, Q, R, x = args
 
+    
     # ode formulation
     term = ODETerm(func)
 
     # initial step
     t = ts
     tnext = t + dt
-    dprev = d[0, :]
-    args = (A, B, dprev)
-    state = solver.init(term, t, tnext, x0, args)
+    u0 = u[0, :]
+    args = (A, B, C, Q, R, u0)
 
-    # initialize output
-    #t_all = [t]
-    #x_all = [x0]
-
-    # main loop
-    i = 0
-    #x = x0
-
-    # jit-ed scan to replace while loop
-#    cond_func = lambda t: t < te
-    def step_at_t(carryover, t, term, dt, te, A, B, d):
+    # helper function
+    def step_at_t(carryover, t, term, dt, te, A, B, C, Q, R, u):
         # the lax.scannable function to computer ODE/DAE systems
-        x = carryover[0]
-        state = carryover[1]
-        i = carryover[2]
-        args = (A, B, d[i, :])
+        xP, state, i = carryover
+        args = (A, B, C, Q, R, u[i, :])
         tnext = jnp.minimum(t + dt, te)
 
-        xnext, _, _, state, _ = solver.step(
-            term, t, tnext, x, args, state, made_jump=False)
+        xPnext, _, _, state, _ = solver.step(
+            term, t, tnext, xP, args, state, made_jump=False)
         i += 1
 
-        return (xnext, state, i), x
+        return (xPnext, state, i), xP
 
-    carryover_init = (x0, state, i)
-    step_func = partial(step_at_t, term=term, dt=dt, te=te, A=A, B=B, d=d)
-    time_steps = np.arange(ts, te+1, dt)
-    carryover_final, x_all = lax.scan(
+    # main loop
+    state0 = solver.init(term, t, tnext, xP0, args)
+    i = 0
+    carryover_init = (xP0, state0, i)
+    step_func = partial(step_at_t, term=term, dt=dt, te=te,
+                        A=A, B=B, C=C, Q=Q, R=R, u=u, z=z)
+    time_steps = jnp.arange(ts, te+1, dt)
+    carryover_final, xP_all = lax.scan(
         step_func, init=carryover_init, xs=time_steps)
 
-    return time_steps, x_all
-
+    return time_steps, xP_all
 
 ### Parameter Inference
-
 # load training data - 1-min sampling rate
 data = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
 index = range(0, len(data)*60, 60)
@@ -140,10 +153,10 @@ n = len(data)
 # - for state x:
 #   construct an array of (B, Ns)
 # - for disturbance d
-#   construct an array of (B, Nd, Nq)
+#   construct an array of (B, Nq, Nd)
 # - for prediction targets y - future temperature
 #   construct an array of (B, Nq) 
-# TODO: implement pytorch-like data loader to get batched data
+# TODO: implement pytorch-like data loader to get batched data -> looks like a library to be developed for dynamic systems
 
 N_q = 24 # future steps for predictions
 N_s = 3 # number of states
@@ -172,12 +185,24 @@ print(dist_batch.shape)
 print(x_init_batch.shape)
 print(y_batch.shape)
 
+# prepare batched x:
+# 1. flatten disturbance [N, Nq, Nd] to [N, Nq*Nd]
+# 2. combine inital x and flattened disturbance to make a set of x
+# 3. load data (x,y) using tensor flow data loader and batch
+def dataloader(data):
+    x_init, dist, y = data
+    N = dist.shape[0] 
+    dist = dist.reshape(N,-1)
+    x_init = x_init.reshape(-1,1)
+    x = np.hstack([x_init, dist])
+    
+    return tf.data.Dataset.from_tensor_slices((x, y))
+
 def split_data(data, train_ratio=0.7):
     x_init, dist, y = data 
-    print(x_init.shape, dist.shape, y.shape)
     n = len(x_init)
     n_train = int(n*train_ratio)
-    return (x_init[:n_train, :], dist[:n_train, :, :], y[:n_train, :]), (x_init[n_train:, :], dist[n_train:, :, :], y[n_train:, :])
+    return (x_init[:n_train, ], dist[:n_train, :, :], y[:n_train, :]), (x_init[n_train:, ], dist[n_train:, :, :], y[n_train:, :])
 
 # split training and testing
 ratio = 0.75
@@ -187,33 +212,55 @@ ratio = 0.75
 #data_test = data[n_train:, :]
 data_train, data_test = split_data((x_init_batch, dist_batch, y_batch), ratio)
 
+# batch the data
+BATCHSIZE = 4 
+SHUFFLE_BUFFER_SIZE = 128
+data_train = dataloader(data_train)
+data_test = dataloader(data_test)
+
+data_train = data_train.batch(BATCHSIZE)
+
+# examine the data in the first batch
+ds = data_train.take(1)
+for e in ds:
+    print(e)
+
+iter = data_train.make_one_shot_iterator()
+el = iter.get_next()
+with tf.Session() as sess:
+    print(sess.run(el)) 
+
 # define training parameters 
 ts = 0
 te = ts + N_q*dt
 solver = Euler()
+RC = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394,
+                1.1442776918411255, 5.741048812866211])
+A, B, C, D = get_ABCD(*RC)
 
 ## The following functions are defined without batch information
 ## We can use vmap to apply batch calculation to these functions
 # forward steps
-f = lambda t, x, args: zone_state_space(t, x, *args) #args[0], args[1], args[2]) 
-def forward_parameters(p, x, ts, te, dt, solver, d):
+kmf = lambda t, xP, args: continuous_kmf(t, xP, *args)
+
+def forward_parameters(p, xP0, ts, te, dt, solver, args):
     """
     p is [Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0]
-    x is Tz0
     """
-    Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0 = p['rc']
-    A, B, C, D = get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg)
-    args = (A, B, d)
 
-    # intial point
-    x0 = jnp.array([x, Twe0, Twi0])
+    Cai, Cwe, Cwi, Re, Ri, Rw, Rg = p['rc']
+    Q, R, dataset = args
+    A, B, C, D = get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg)
+    
+    args1 = (A, B, C, Q, R, u, z)
 
     # forward calculation
-    t, x = forward(f, ts, te, dt, x0, solver, args)
+    t, xP = forward(kmf, ts, te, dt, xP0, solver, args1)
 
-    return t, x 
+    return t, xP
 
-model = lambda p,x: forward_parameters(p, x, ts, te, dt, solver, d)
+args = (A, B, C, us_train, ys_train_noise)
+def model(p, xP0): return forward_parameters(p, xP0, ts, te, dt, solver, args)
 
 # loss function
 def loss_fcn(p, x, y_true, p_lb, p_ub):
