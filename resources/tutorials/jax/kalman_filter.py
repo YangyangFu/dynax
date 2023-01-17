@@ -31,6 +31,7 @@ config.update("jax_enable_x64", True)
 
 n_devices = jax.local_device_count()
 print(n_devices)
+
 # a simple RC zone model -> ODE system
 """
 This is a 4r3c model for zone temperature prediction
@@ -72,6 +73,9 @@ def get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg):
 
 @jit
 def continuous_kmf(t, xP, A, B, C, Q, R, u, z):
+    """
+    TODO: Kalman filter needs significant tuning otherwise it would lead to unrealistic big dxdt if K is too big.
+    """
     # extract states
     x, P = xP
     
@@ -139,57 +143,6 @@ def forward(func, ts, te, dt, xP0, solver, args):
         step_func, init=carryover_init, xs=time_steps)
 
     return time_steps, xP_all
-
-"""
-### A single forward pass test
-### ==============================================
-# load training data - 1-min sampling rate
-data = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
-index = range(0, len(data)*60, 60)
-data.index = index
-
-# sample every hour
-dt = 3600.
-data = data.groupby([data.index // dt]).mean()
-n = len(data)
-
-# split training and testing
-ratio = 0.1
-n_train = int(len(data)*ratio)
-print(n_train)
-data_train = data.iloc[:n_train, :]
-data_test = data.iloc[n_train:, :]
-
-us_train = jnp.array(data_train.iloc[:n_train+1,:5].values)
-#us = None 
-
-# define training parameters 
-ys_train = jnp.array(data_train.iloc[:, -1].values).reshape(-1,1)
-
-# test forward function
-kmf = lambda t, xP, args: continuous_kmf(t, xP, *args)
-ts = 0
-te = n_train*3600 #14*24*3600
-x0 = jnp.array([20.0, 35.0, 26.0])
-# weighs how much we trust our initial guess: if we know the exact position and velocity, we give it a zero covariance matrix
-P0 = jnp.diag(jnp.ones((3,)))*0.1
-xP0 = (x0, P0)
-solver = Euler()
-RC = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394,
-                     1.1442776918411255, 5.741048812866211])
-A, B, C, D = get_ABCD(*RC)
-# weighs how much we trust our model of the system
-Q = jnp.diag(jnp.ones((3,)))*1e-05
-# weighs how much we trust in the measurements of the system
-R = jnp.diag(jnp.ones((1,)))*10000
-args = (A, B, C, Q, R, us_train, ys_train)
-forward_ts = time.time()
-t, xP = forward(kmf, ts, te, dt, xP0, solver, args)
-forward_te = time.time()
-print(f"single forward simulation costs {forward_te-forward_ts} s!")
-print(t.shape)
-print(xP)
-"""
 
 # load training data - 1-min sampling rate
 data = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
@@ -302,31 +255,40 @@ def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransform
 print(loss_fn({'qr':(Q0, R0)}, xP0, ys_train))
 
 # trainer
-n_epochs = 1200
+n_epochs = 1300
 schedule = optax.exponential_decay(
     init_value = 1e-5, 
-    transition_steps = 500, 
+    transition_steps = 1200, 
     decay_rate = 0.99, 
     transition_begin=0, 
     staircase=False, 
-    end_value=1e-8
+    end_value=1e-10
 )
 optimizer = optax.chain(
     optax.adabelief(learning_rate = schedule)
 )
 
 initial_params = {'qr': (Q0, R0)}
+# Intial call for compilation
+params = fit((xP0, ys_train_noise), 2, initial_params, optimizer)
+
 s = time.time()
 params = fit((xP0, ys_train_noise), n_epochs, initial_params, optimizer)
 e = time.time()
 print(f"execution time is: {e-s} seconds !")
 print(f"Final Q: \n{params['qr'][0]}\n Final R: \n{params['qr'][1]}")
 
-## PLOTS
 
+# test: simulate all data
+us = jnp.array(data.iloc[:,:5].values)
+ys = jnp.array(data.iloc[:, -1].values).reshape(-1,1)
+
+args = (A, B, C, us, ys)
+def model(p, xP0): return forward_parameters(p, xP0, ts, len(ys)*900, dt, solver, args)
 t, xPhat = model(params, xP0)
+
 plt.figure(figsize=(12,6))
-plt.plot(t[1:], ys_train, label="true", color="orange")
+plt.plot(t[1:], ys, label="true", color="orange")
 plt.plot(
     t,
     xPhat[0][:, 0],
@@ -336,13 +298,16 @@ plt.plot(
 )
 plt.plot(
     t[1:],
-    ys_train_noise,
+    ys,
     label="measured",
     color='red',
     linestyle='dashed',
     linewidth=0.5,
 )
-
+# plot a verical line to seraprate training and test data
+plt.axvline(x=n_train*900, color='r', lw=2)
+plt.text((n_train-500)*900, 28, 'Train Set', fontsize=20, color='red')
+plt.text((n_train+10)*900, 28, 'Test Set', fontsize=20, color='r')
 plt.xlabel("time")
 plt.ylabel("Temperature")
 plt.grid()
