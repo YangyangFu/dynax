@@ -126,7 +126,7 @@ def main(
     # initial state of our data generating system
     sys_true_x0=jnp.array([1.0, 0.0]),
     # standard deviation of measurement noise
-    sys_true_std_measurement_noise=1.0,
+    sys_true_std_measurement_noise=0.1,
     # our model for system `true`, it's not perfect
     sys_model=harmonic_oscillator(0.7),
     # initial state guess, it's not perfect
@@ -139,7 +139,7 @@ def main(
     P0=jnp.diag(jnp.ones((2,))) * 1.0,
     plot=True,
     n_gradient_steps=0,
-    print_every=10,
+    print_every=100,
 ):
 
     xs, ys = simulate_lti_system(
@@ -161,15 +161,27 @@ def main(
     @ft.partial(eqx.filter_value_and_grad, arg=filter_spec)
     def loss_fn(kmf, ts, ys, xs):
         xhats = kmf(ts, ys)
+        # minimize error between true state and estimated state
         return jnp.mean((xs - xhats) ** 2)
 
-    opt = optax.adam(1e-2)
+  
+    schedule = optax.exponential_decay(
+        init_value=1e-4,
+        transition_steps=2000,
+        decay_rate=0.99,
+        transition_begin=0,
+        staircase=False,
+        end_value=1e-5
+    )
+    opt = optax.chain(
+        optax.adabelief(learning_rate=schedule)
+    )
     opt_state = opt.init(kmf)
 
     for step in range(n_gradient_steps):
         value, grads = loss_fn(kmf, ts, ys, xs)
         if step % print_every == 0:
-            print("Current MSE: ", value)
+            print(f"Current MSE at step {step}: {value}")
         updates, opt_state = opt.update(grads, opt_state)
         kmf = eqx.apply_updates(kmf, updates)
 
@@ -193,11 +205,12 @@ def main(
             color="blue",
             linestyle="dashed",
         )
+        plt.plot(ts, ys, label="measured velocity", color="red")
         plt.xlabel("time")
         plt.ylabel("position / velocity")
         plt.grid()
         plt.legend()
         plt.title("Kalman-Filter optimization w.r.t Q/R")
+        plt.savefig('kmf-example.png')
 
-
-main(n_gradient_steps=1000)
+main(n_gradient_steps=3000)

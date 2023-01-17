@@ -57,7 +57,7 @@ RUN conda update conda && \
 RUN conda install -c nvidia cuda-nvcc 
 RUN pip install --upgrade pip && \
     pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html && \
-    pip install diffrax optax flax equinox
+    pip install diffrax optax flax equinox tensorflow
 
 # create user and render using X11 forwarding 
 RUN export uid=1000 gid=1000 && \
