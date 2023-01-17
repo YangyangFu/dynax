@@ -154,48 +154,44 @@ dt = 900.
 data = data.groupby([data.index // dt]).mean()
 n = len(data)
 
+# add some noise to prediction data to represent measurement noise
+std_measurement_noise = 0.1
+key = jr.PRNGKey(1,)
+data_noise = data.copy()
+data_noise['weighted_average'] = data['weighted_average'] + \
+    jr.normal(key, shape=data['weighted_average'].values.shape) * std_measurement_noise
+print(data.head(5))
+print(data_noise.head(5))
+
 # split training and testing
 ratio = 0.75
-n_train = int(len(data)*ratio)
-print(n_train)
-print(data.head(5))
-data_train = data.iloc[:n_train, :]
-data_test = data.iloc[n_train:, :]
+n_train = int(len(data_noise)*ratio)
+data_train = data_noise.iloc[:n_train, :]
+data_test = data_noise.iloc[n_train:, :]
 
 us_train = jnp.array(data_train.iloc[:n_train+1,:5].values)
-#us = None 
-
-# define training parameters 
 ys_train = jnp.array(data_train.iloc[:, -1].values).reshape(-1,1)
 
 # test forward function
 kmf = lambda t, xP, args: continuous_kmf(t, xP, *args)
 ts = 0
-te = n_train*900 #14*24*3600
+te = n_train*dt 
 nonl_solver = NewtonNonlinearSolver(rtol=1e-3, atol=1e-6)
 solver = ImplicitEuler(nonlinear_solver=nonl_solver) #Euler()
 RC = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394,
-                     1.1442776918411255, 5.741048812866211])
+                     1.1442776918411255, 5.741048812866211]) # from model identification
 A, B, C, D = get_ABCD(*RC)
 
-# some initials
+# some initials for kalman filter
 x0 = jnp.array([20.0, 20.0, 20.0])
 P0 = jnp.diag(jnp.ones((3,)))
 xP0 = (x0, P0)
-
 # weighs how much we trust our model of the system
 Q0 = jnp.diag(jnp.ones((3,)))*1e-01
 # weighs how much we trust in the measurements of the system
 R0 = jnp.diag(jnp.ones((1,)))*10000
 
-# real measurement with noise
-std_measurement_noise = 0.
-key = jr.PRNGKey(1,)
-ys_train_noise = ys_train + \
-    jr.normal(key, shape=ys_train.shape) * std_measurement_noise
-
-# some functions
-### parameter inference
+### parameter inference -> inverse simulation
 ### ====================
 # create function to faciliate the simulation of kalman filter with different Q and R
 def forward_parameters(p, xP0, ts, te, dt, solver, args):
@@ -213,10 +209,8 @@ def forward_parameters(p, xP0, ts, te, dt, solver, args):
     #jax.debug.print("{xP}", xP=xP)
     return t, xP
 
-args = (A, B, C, us_train, ys_train_noise)
+args = (A, B, C, us_train, ys_train)
 def model(p, xP0): return forward_parameters(p, xP0, ts, te, dt, solver, args)
-
-model = jit(model)
 
 @jit
 def loss_fn(params, xP0, y_true):
@@ -228,7 +222,7 @@ def loss_fn(params, xP0, y_true):
     penality = 0  # jnp.linalg.norm(P_pred)
     return loss + penality
 
-
+# trainer 
 def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransformation) -> optax.Params:
     # initialize params
     states = optimizer.init(params)
@@ -269,17 +263,14 @@ optimizer = optax.chain(
 )
 
 initial_params = {'qr': (Q0, R0)}
-# Intial call for compilation
-params = fit((xP0, ys_train_noise), 2, initial_params, optimizer)
 
 s = time.time()
-params = fit((xP0, ys_train_noise), n_epochs, initial_params, optimizer)
+params = fit((xP0, ys_train), n_epochs, initial_params, optimizer)
 e = time.time()
 print(f"execution time is: {e-s} seconds !")
 print(f"Final Q: \n{params['qr'][0]}\n Final R: \n{params['qr'][1]}")
 
-
-# test: simulate all data
+## test: simulate all data
 us = jnp.array(data.iloc[:,:5].values)
 ys = jnp.array(data.iloc[:, -1].values).reshape(-1,1)
 
@@ -313,5 +304,37 @@ plt.ylabel("Temperature")
 plt.grid()
 plt.legend()
 plt.title("Kalman-Filter optimization w.r.t Q/R")
-plt.savefig('kalman_filter.png')
-plt.savefig('kalman_filter.pdf')
+plt.savefig('kalman_filter_optimal.png')
+plt.savefig('kalman_filter_optimal.pdf')
+
+# what the results without tuning Q,R -. seems not much change
+t, xPhat = model(initial_params, xP0)
+
+plt.figure(figsize=(12,6))
+plt.plot(t[1:], ys, label="true", color="orange")
+plt.plot(
+    t,
+    xPhat[0][:, 0],
+    label="estimated",
+    color="blue",
+    linestyle="dashed",
+)
+plt.plot(
+    t[1:],
+    ys,
+    label="measured",
+    color='red',
+    linestyle='dashed',
+    linewidth=0.5,
+)
+# plot a verical line to seraprate training and test data
+plt.axvline(x=n_train*900, color='r', lw=2)
+plt.text((n_train-500)*900, 28, 'Train Set', fontsize=20, color='red')
+plt.text((n_train+10)*900, 28, 'Test Set', fontsize=20, color='r')
+plt.xlabel("time")
+plt.ylabel("Temperature")
+plt.grid()
+plt.legend()
+plt.title("Kalman-Filter")
+plt.savefig('kalman_filter_initial.png')
+plt.savefig('kalman_filter_initial.pdf')
