@@ -1,13 +1,19 @@
 # DiffBuildings
 This repo implements a differentiable simulator for building energy systems to support forward simulation, parameter inference and optimal control.
 
-## Taichi Implementation
+# Software Architecture
+![structure](./doc/structure.png)
 
-
-## Pytorch Implementation
-### Toolchain
-- Pytorch for basic auto-diff
-- torchdiffeq for differential equation solvers
+1. NeuralNetwork: a deep-learning framework based parametric programming module, e.g., pytorch, Flax etc.
+2. DataLoader: prepare dynamic system data to trainable and testable data format
+3. ModelingTookit: equation-based modeling tool
+4. Compiler: compile models to ODE/DAE systems in pure mathematical representation
+5. System: define unified system representation based on ODEs/DAEs, such as ODESystem, DAESystem, NeuralODESystem, ..., etc
+6. NumericalSolver: define ODE/DAE integration solvers for solving dynamic systems that are typically represented as differential (algebriac) equations.
+7. Problem: define a trainable problem, such as forward simulation, inverse simulation, implicit MPC, explicit MPC, model-based DRL, ..., etc
+8. Optimizer: define an optimizer for the trainable problem, such as gradient descent
+9. Trainer: define a training/learning process for a specific problem
+10. TestCases: define some basic test cases to benchmark testing performance
 
 ## JAX implementation
 
