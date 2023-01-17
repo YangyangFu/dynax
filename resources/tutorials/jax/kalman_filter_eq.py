@@ -180,7 +180,7 @@ n = len(data)
 print(n)
 
 # split training and testing
-ratio = 0.04
+ratio = 0.75
 n_train = int(len(data)*ratio)
 print(n_train)
 data_train = data.iloc[:n_train, :]
@@ -239,7 +239,7 @@ def loss_fn(kmf, ts, ys, us, xs):
     xhats = kmf(ts, ys, us)
     return jnp.mean((xs - xhats) ** 2)
 
-n_gradient_steps = 50000
+n_gradient_steps = 500
 print_every = 100 
 
 schedule = optax.exponential_decay(
@@ -298,4 +298,4 @@ plt.ylabel("Temperature")
 plt.grid()
 plt.legend()
 plt.title("Kalman-Filter optimization w.r.t Q/R")
-plt.savefig('kalman_filter.png')
+plt.savefig('kalman_filter_eq.png')

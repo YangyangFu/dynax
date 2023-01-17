@@ -16,7 +16,7 @@ from jax import jit, lax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
-from diffrax import diffeqsolve, ODETerm, Euler, Dopri5, SaveAt, PIDController
+from diffrax import diffeqsolve, ODETerm, Euler, ImplicitEuler, Kvaerno3, Dopri5, SaveAt, PIDController, NewtonNonlinearSolver
 
 import matplotlib.pyplot as plt
 import optax  # https://github.com/deepmind/optax
@@ -88,12 +88,16 @@ def continuous_kmf(t, xP, A, B, C, Q, R, u, z):
 
     # eq 3.23 of Ref [1]
     dxdt = A @ x + B @ u + K @ (z - C @ x)
-
+    #jax.debug.print("{x}", x=x)
+    #jax.debug.print("{dxdt}", dxdt=A@x + B@u)
+    #jax.debug.print("{K}", K=K)
+    #jax.debug.print("{e}", e=z - C@x)
+    #jax.debug.print("{dxdt}", dxdt=dxdt)
     return (dxdt, dPdt)
 
 # Using for loop to update the disturbance every time step
 # forward function that simulates ODE given time period and inputs
-@partial(jit, static_argnums=(0, 1, 2, 3,))
+@partial(jit, static_argnums=(0, 1, 2, 3, 5,))
 def forward(func, ts, te, dt, xP0, solver, args):
     # unpack args:
     # A, B, C: system dynamics coefficents
@@ -192,15 +196,16 @@ data = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
 index = range(0, len(data)*60, 60)
 data.index = index
 
-# sample every hour
-dt = 3600.
+# sample 
+dt = 900.
 data = data.groupby([data.index // dt]).mean()
 n = len(data)
 
 # split training and testing
-ratio = 0.1
+ratio = 0.75
 n_train = int(len(data)*ratio)
 print(n_train)
+print(data.head(5))
 data_train = data.iloc[:n_train, :]
 data_test = data.iloc[n_train:, :]
 
@@ -213,24 +218,25 @@ ys_train = jnp.array(data_train.iloc[:, -1].values).reshape(-1,1)
 # test forward function
 kmf = lambda t, xP, args: continuous_kmf(t, xP, *args)
 ts = 0
-te = n_train*3600 #14*24*3600
-solver = Euler()
+te = n_train*900 #14*24*3600
+nonl_solver = NewtonNonlinearSolver(rtol=1e-3, atol=1e-6)
+solver = ImplicitEuler(nonlinear_solver=nonl_solver) #Euler()
 RC = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394,
                      1.1442776918411255, 5.741048812866211])
 A, B, C, D = get_ABCD(*RC)
 
 # some initials
-x0 = jnp.array([20.0, 35.0, 26.0])
+x0 = jnp.array([20.0, 20.0, 20.0])
 P0 = jnp.diag(jnp.ones((3,)))
 xP0 = (x0, P0)
 
 # weighs how much we trust our model of the system
-Q0 = jnp.diag(jnp.ones((3,)))*1e-05
+Q0 = jnp.diag(jnp.ones((3,)))*1e-01
 # weighs how much we trust in the measurements of the system
-R0 = jnp.diag(jnp.ones((1,)))*100000
+R0 = jnp.diag(jnp.ones((1,)))*10000
 
 # real measurement with noise
-std_measurement_noise = 1
+std_measurement_noise = 0.
 key = jr.PRNGKey(1,)
 ys_train_noise = ys_train + \
     jr.normal(key, shape=ys_train.shape) * std_measurement_noise
@@ -250,7 +256,8 @@ def forward_parameters(p, xP0, ts, te, dt, solver, args):
 
     # forward calculation
     t, xP = forward(kmf, ts, te, dt, xP0, solver, args1)
-
+    
+    #jax.debug.print("{xP}", xP=xP)
     return t, xP
 
 args = (A, B, C, us_train, ys_train_noise)
@@ -284,7 +291,7 @@ def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransform
 
     for epoch in range(n_epochs):
         params, states, loss, grads = step(params, states, x, y)
-        if epoch % 1000 == 0:
+        if epoch % 1 == 0:
             print(f'epoch {epoch}, training loss: {loss}')
             #print(grads['rc'].max(), grads['rc'].min())
 
@@ -294,17 +301,18 @@ def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransform
 # test loss function
 print(loss_fn({'qr':(Q0, R0)}, xP0, ys_train))
 
-n_epochs = 500000
+# trainer
+n_epochs = 1200
 schedule = optax.exponential_decay(
-    init_value = 1e-6, 
-    transition_steps = 50000, 
+    init_value = 1e-5, 
+    transition_steps = 500, 
     decay_rate = 0.99, 
-    transition_begin=100000, 
+    transition_begin=0, 
     staircase=False, 
     end_value=1e-8
 )
 optimizer = optax.chain(
-    optax.adabelief(learning_rate = 1e-06)
+    optax.adabelief(learning_rate = schedule)
 )
 
 initial_params = {'qr': (Q0, R0)}
@@ -317,20 +325,22 @@ print(f"Final Q: \n{params['qr'][0]}\n Final R: \n{params['qr'][1]}")
 ## PLOTS
 
 t, xPhat = model(params, xP0)
+plt.figure(figsize=(12,6))
 plt.plot(t[1:], ys_train, label="true", color="orange")
 plt.plot(
     t,
     xPhat[0][:, 0],
     label="estimated",
-    color="orange",
+    color="blue",
     linestyle="dashed",
 )
 plt.plot(
     t[1:],
     ys_train_noise,
     label="measured",
-    color='orange',
-    linestyle='dotted',
+    color='red',
+    linestyle='dashed',
+    linewidth=0.5,
 )
 
 plt.xlabel("time")
@@ -339,3 +349,4 @@ plt.grid()
 plt.legend()
 plt.title("Kalman-Filter optimization w.r.t Q/R")
 plt.savefig('kalman_filter.png')
+plt.savefig('kalman_filter.pdf')
