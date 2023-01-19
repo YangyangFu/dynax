@@ -62,6 +62,7 @@ class MPC():
     def step(self, disturbance):
         """
         step forward in MPC
+
         :param state: initial state for state-space model
         :type state: jny.numpy (n,)
         :param ts: start time
@@ -97,7 +98,7 @@ class MPC():
         # call optimizer to minimize loss
         lr = 0.01
         tolerance = 1e-06
-        n_epochs = 5000
+        n_epochs = 10000
         optimizer = optax.adamw(learning_rate = lr)
         #u0 = jnp.zeros([self.PH, 1])
         u0 = self.u_start
@@ -285,6 +286,77 @@ def _fit_step(params, opt_state, state, ts, te, dt, disturbance, T_ub_ph, T_lb_p
 
     return params, opt_state, u_ph, loss, grads
 
+# define jitt4ed kalman filter
+@jit
+def continuous_kmf(t, xP, A, B, C, Q, R, u, z):
+
+    # extract states
+    x, P = xP
+    
+    # eq 3.22 of Ref [1]
+    K = P @ C.transpose() @ jnp.linalg.inv(R)
+
+    # eq 3.21 of Ref [1]
+    dPdt = (
+        A @ P
+        + P @ A.transpose()
+        + Q
+        - P @ C.transpose() @ jnp.linalg.inv(R) @ C @ P
+    )
+
+    # eq 3.23 of Ref [1]
+    dxdt = A @ x + B @ u + K @ (z - C @ x)
+    #jax.debug.print("{x}", x=x)
+    #jax.debug.print("{dxdt}", dxdt=A@x + B@u)
+    #jax.debug.print("{K}", K=K)
+    #jax.debug.print("{e}", e=z - C@x)
+    #jax.debug.print("{dxdt}", dxdt=dxdt)
+    return (dxdt, dPdt)
+
+# Using for loop to update the disturbance every time step
+# forward function that simulates ODE given time period and inputs
+@Partial(jit, static_argnums=(0, 1, 2, 3, 5,))
+def forward_kmf(func, ts, te, dt, xP0, solver, args):
+    # unpack args:
+    # A, B, C: system dynamics coefficents
+    # Q, R: variance of modeling errors and measurement noise
+    # u: control inputs and disturbances
+    # z: measurements
+    A, B, C, Q, R, u, z = args
+
+    # ode formulation
+    term = ODETerm(func)
+
+    # initial step
+    t = ts
+    tnext = t + dt
+    u0 = u[0, :]
+    z0 = z[0, :]
+    args = (A, B, C, Q, R, u0, z0)
+    
+    # helper function
+    def step_at_t(carryover, t, term, dt, te, A, B, C, Q, R, u, z):
+        # the lax.scannable function to computer ODE/DAE systems
+        xP, state, i = carryover
+        args = (A, B, C, Q, R, u[i, :], z[i, :])
+        tnext = jnp.minimum(t + dt, te)
+
+        xPnext, _, _, state, _ = solver.step(
+            term, t, tnext, xP, args, state, made_jump=False)
+        i += 1
+
+        return (xPnext, state, i), xP
+    
+    # main loop
+    state0 = solver.init(term, t, tnext, xP0, args)
+    i = 0
+    carryover_init = (xP0, state0, i)
+    step_func = Partial(step_at_t, term=term, dt=dt, te=te, A=A, B=B, C=C, Q=Q, R=R, u=u, z=z)
+    time_steps = jnp.arange(ts, te+1, dt)
+    carryover_final, xP_all = lax.scan(
+        step_func, init=carryover_init, xs=time_steps)
+
+    return time_steps, xP_all
 
 if __name__ == '__main__':
     print(jax.devices())
@@ -295,7 +367,7 @@ if __name__ == '__main__':
     key = random.PRNGKey(44)
 
     # MPC setting
-    PH = 24
+    PH = 48
     CH = 1
     dt = 900
     nsteps_per_hour = int(3600 / dt)
@@ -315,7 +387,7 @@ if __name__ == '__main__':
 
     # Experiment settings
     ts = 195*24*3600
-    ndays = 1
+    ndays = 7
     te = ndays*24*3600 + ts
 
     # get predictor
@@ -327,7 +399,7 @@ if __name__ == '__main__':
     # get zone model
     Cai, Cwe, Cwi, Re, Ri, Rw, Rg = predictor['zone_model']
     A, B, C, D = get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg)
-    
+
     # set energy price schedule
     price = jnp.array([0.02987, 0.02987, 0.02987, 0.02987,
                0.02987, 0.02987, 0.04667, 0.04667,
@@ -340,12 +412,20 @@ if __name__ == '__main__':
     mpc = MPC(PH, CH, dt, predictor, price)
     print(mpc.u_start.shape)
 
-    # initial state for rc zone
-    state = jnp.array([20, 27.21, 26.76])
-    
+    # initialize kalman filter estimator
+    kmf = lambda t, xP, args: continuous_kmf(t, xP, *args) 
+    solver = Euler()
+
+    # initial guesses for kalman filter
+    state = jnp.array([20., 35., 26.])
+    P0 = jnp.diag(jnp.ones((3,)))
+    xP0 = (state, P0)
+    Q = jnp.diag(jnp.ones((3,)))*1e-04
+    R = jnp.diag(jnp.ones((1,)))*50000.
+
     # initialize random seeds for noises in measurements
     keys = random.split(key, int((te-ts)/dt))
-    mu_noise = 0.2
+    mu_noise = 0.5
 
     # initialize output 
     u_opt  = []
@@ -355,11 +435,11 @@ if __name__ == '__main__':
 
     # main loop
     for i, t in enumerate(range(ts, te, dt)):
-        
+
         # get disturbance
         dist_t_ph = get_disturbance_ph(dist, t, PH, dt)
         dist_t_ph = jnp.array(dist_t_ph.values)
-
+                
         # set mpc time
         mpc.set_time(t)
 
@@ -390,6 +470,17 @@ if __name__ == '__main__':
         Tz_opt_pred.append(float(state[0]))
         Tz_opt.append(float(state[0] + mu_noise*random.normal(keys[i])))
         To_opt.append(float(dist_t[0,0]))
+
+        # apply kalman filter
+        ui = dist_t
+        zi = jnp.array([Tz_opt[-1]]).reshape(-1,1)
+        tkmf,xP = forward_kmf(kmf, t, t+dt, dt, xP0, Euler(), (A,B,C,Q,R,ui,zi))
+
+        # for next step
+        state = xP[0][-1,:] # estimated state for MPC next step
+        print(state)
+        P = xP[1][-1,:,:]
+        xP0 = (state, P)
 
     ### POST-PROCESS
     # plot some figures
@@ -433,7 +524,7 @@ if __name__ == '__main__':
     plt.plot(u_opt)
     plt.ylabel("Cooling Rate (kW)")
     plt.xticks(xticks, xticklabels)
-    plt.savefig("mpc_"+str(PH)+".png")
+    plt.savefig("mpc_"+str(PH)+"_kmf.png")
 
     # save some kpis
     energy_cost = jnp.sum(price_dt.flatten()*jnp.abs(jnp.array(u_opt))*dt/3600)
@@ -449,5 +540,5 @@ if __name__ == '__main__':
     kpi['dT_max'] = float(dT_max)
     kpi['dTh'] = float(dTh)
 
-    with open("mpc_kpi_"+str(PH)+".json", 'w') as file:
+    with open("mpc_kpi_"+str(PH)+"_kmf.json", 'w') as file:
         json.dump(kpi, file)
