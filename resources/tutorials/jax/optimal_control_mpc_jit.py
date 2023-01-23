@@ -95,7 +95,7 @@ class MPC():
         T_lb_ph = self.T_lb[h_ph].reshape(-1, 1)
 
         # call optimizer to minimize loss
-        lr = 0.01
+        lr = 0.001
         tolerance = 1e-06
         n_epochs = 5000
         optimizer = optax.adamw(learning_rate = lr)
@@ -295,7 +295,7 @@ if __name__ == '__main__':
     key = random.PRNGKey(44)
 
     # MPC setting
-    PH = 24
+    PH = 48
     CH = 1
     dt = 900
     nsteps_per_hour = int(3600 / dt)
@@ -315,14 +315,17 @@ if __name__ == '__main__':
 
     # Experiment settings
     ts = 195*24*3600
-    ndays = 7
+    ndays = 1
     te = ndays*24*3600 + ts
 
     # get predictor
     predictor = {}
     # [Cai, Cwe, Cwi, Re, Ri, Rw, Rg]
-    predictor['zone_model'] = jnp.array([6.9789902e+03, 2.1591113e+04, 1.8807944e+05, 3.4490612e+00,
-                                      4.9556872e-01, 9.8289281e-02, 4.6257420e+00])
+    #predictor['zone_model'] = jnp.array([6.9789902e+03, 2.1591113e+04, 1.8807944e+05, 3.4490612e+00,
+    #                                  4.9556872e-01, 9.8289281e-02, 4.6257420e+00])
+    predictor['zone_model'] = jnp.array([10838.6513671875, 1000000.0, 10000000.0,
+                                         8.894198417663574, 0.5456274747848511,
+                                         1.047658085823059, 9.346653938293457])
     # get zone model
     Cai, Cwe, Cwi, Re, Ri, Rw, Rg = predictor['zone_model']
     A, B, C, D = get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg)
@@ -340,8 +343,8 @@ if __name__ == '__main__':
     print(mpc.u_start.shape)
 
     # initial state for rc zone
-    state = jnp.array([20, 27.21, 26.76])
-    
+    # state = jnp.array([20, 27.21, 26.76])
+    state = jnp.array([20, 34.8, 26.])    
     # initialize random seeds for noises in measurements
     keys = random.split(key, int((te-ts)/dt))
     mu_noise = 0.

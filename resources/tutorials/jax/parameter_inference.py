@@ -176,7 +176,9 @@ def loss_fcn(p, x, y_true, p_lb, p_ub):
 
     penalty = jnp.sum(jax.nn.relu(p['rc'] - p_ub) + jax.nn.relu(p_lb - p['rc']))
 
-    return loss + penalty
+    norm = (p['rc'] - p_lb)/ (p_ub - p_lb)
+    reg = jnp.linalg.norm(norm, 2)
+    return loss + penalty + 10*reg
 
 # data preparation
 d = data_train.values[:,:5]
@@ -227,7 +229,7 @@ def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransform
 ## Run optimization for inference
 # parameter settings
 p_lb = jnp.array([1.0E3, 1.0E4, 1.0E5, 1.0, 1E-02, 1.0, 1.0E-1, 20.0, 20.0])
-p_ub = jnp.array([1.0E5, 1.0E6, 1.0E7, 10., 10., 100., 10., 35.0, 30.0])
+p_ub = jnp.array([1.0E5, 1.0E6, 1.0E8, 10., 10., 100., 10., 35.0, 30.0])
 
 #p0 = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394, 1.1442776918411255, 5.741048812866211, 34.82638931274414, 26.184139251708984])
 
@@ -236,14 +238,14 @@ x0 = jax.device_put(y_train[0])
 print(p0, x0)
 print(loss_fcn({'rc':p0}, x0, y_train, p_lb, p_ub))
 
-n_epochs = 100000
+n_epochs = 1000000
 schedule = optax.exponential_decay(
     init_value = 0.1, 
-    transition_steps = 1000, 
+    transition_steps = 500000, 
     decay_rate = 0.99, 
     transition_begin=0, 
     staircase=False, 
-    end_value=1e-05
+    end_value=1e-06
 )
 optimizer = optax.chain(
     optax.adabelief(learning_rate = schedule)
