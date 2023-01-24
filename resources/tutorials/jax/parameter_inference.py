@@ -146,14 +146,22 @@ ts = 0
 te = ts + n_train*dt
 solver = Euler()
 
+# scale parameters
+scale = jnp.array([3.0E4, 5.0E5, 5.0E6, 10., 5., 10., 50., 36.0, 30.0])
+#scale = jnp.array([1.0E5, 3.0E4, 5.0E5, 5., 5., 5., 5., 36.0, 30.0])
 # forward steps
 f = lambda t, x, args: zone_state_space(t, x, *args)#args[0], args[1], args[2]) 
-def forward_parameters(p, x, ts, te, dt, solver, d):
+def forward_parameters(p, x, ts, te, dt, solver, d, scale):
     """
     p is [Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0]
     x is Tz0
     """
-    Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0 = p['rc']
+    #Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0 = p['rc']
+    rc_norm = p['rc']
+    rc = rc_norm*scale
+    # scale up to normal range
+    Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0 = rc
+
     A, B, C, D = get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg)
     args = (A, B, d)
 
@@ -165,7 +173,7 @@ def forward_parameters(p, x, ts, te, dt, solver, d):
 
     return t, x 
 
-model = lambda p,x: forward_parameters(p, x, ts, te, dt, solver, d)
+model = lambda p,x: forward_parameters(p, x, ts, te, dt, solver, d, scale)
 model = jit(model)
 
 # loss function
@@ -178,7 +186,7 @@ def loss_fcn(p, x, y_true, p_lb, p_ub):
 
     norm = (p['rc'] - p_lb)/ (p_ub - p_lb)
     reg = jnp.linalg.norm(norm, 2)
-    return loss + penalty + 10*reg
+    return loss + penalty
 
 # data preparation
 d = data_train.values[:,:5]
@@ -228,27 +236,30 @@ def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransform
 
 ## Run optimization for inference
 # parameter settings
-p_lb = jnp.array([1.0E3, 1.0E4, 1.0E5, 1.0, 1E-02, 1.0, 1.0E-1, 20.0, 20.0])
-p_ub = jnp.array([1.0E5, 1.0E6, 1.0E8, 10., 10., 100., 10., 35.0, 30.0])
-
+#p_lb = jnp.array([1.0E3, 1.0E4, 1.0E5, 1.0, 1E-01, 1.0, 1.0, 20.0, 20.0])
+#p_ub = jnp.array([1.0E5, 3.0E4, 3.0E5, 10., 1., 10., 10., 35.0, 30.0])
+p_lb = jnp.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.6, 0.65])
+p_ub = jnp.array([1., 1., 1., 1., 1., 1., 1., 1., 1.])
 #p0 = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394, 1.1442776918411255, 5.741048812866211, 34.82638931274414, 26.184139251708984])
 
 p0 = p_ub
+p0 = jnp.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.8, 0.8])
+
 x0 = jax.device_put(y_train[0])
 print(p0, x0)
 print(loss_fcn({'rc':p0}, x0, y_train, p_lb, p_ub))
 
-n_epochs = 1000000
+n_epochs = 100000#5000000
 schedule = optax.exponential_decay(
-    init_value = 0.1, 
-    transition_steps = 500000, 
+    init_value = 1e-4, 
+    transition_steps = 150000, 
     decay_rate = 0.99, 
     transition_begin=0, 
     staircase=False, 
-    end_value=1e-06
+    end_value=1e-05
 )
 optimizer = optax.chain(
-    optax.adabelief(learning_rate = schedule)
+    optax.adamw(learning_rate = 1e-04)
 )
 
 initial_params = {'rc': p0}
@@ -264,7 +275,7 @@ te = ts + n*dt
 d = data.values[:, :5]
 y = data.values[:, 5]
 forward_ts = time.time()
-model = lambda p,x: forward_parameters(p, x, ts, te, dt, solver, d)
+model = lambda p,x: forward_parameters(p, x, ts, te, dt, solver, d, scale)
 t_pred, ys_pred = model(params, x0)
 forward_te = time.time()
 print(f"single forward simulation costs {forward_te-forward_ts} s!")
@@ -281,6 +292,12 @@ plt.legend()
 plt.savefig('parameter_inference.png')
 
 # save the parameters
-params_tolist = [float(p) for p in params['rc']]
+params_tolist = [float(p) for p in params['rc']*scale]
 with open('zone_coefficients.json', 'w') as f:
     json.dump(params_tolist,f)
+
+A, B, C, D = get_ABCD(*initial_params['rc'][:-2])
+print(jnp.linalg.eig(A))
+
+A, B, C, D = get_ABCD(*params['rc'][:-2])
+print(jnp.linalg.eig(A))

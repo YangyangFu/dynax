@@ -42,7 +42,10 @@ This repo implements a differentiable simulator for building energy systems to s
 - Bayesian calibration
 - Bayesian optimization -> for control what is this?
 
-## MPC -> stotistical MPC
+## MPC
+
+The example shew with large RC, the first-order gradient method that requires tuning cannot generate sufficient precooling control sequence, which is counter-intuitive. 
+
 
 ## Model-based DRL
 

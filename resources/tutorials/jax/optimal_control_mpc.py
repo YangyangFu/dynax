@@ -124,7 +124,7 @@ class MPC():
             params = optax.apply_updates(params, updates)
 
             #rel_error = jnp.abs(loss - loss_prev)/max(loss_prev, 1e-12)
-            if epoch % 10 == 0:
+            if epoch % 100 == 0:
                 print(f'epoch {epoch}, training loss: {loss}')
             #print(f'epoch {epoch}, training loss: {loss}, relative loss: {rel_error}')
 
