@@ -295,7 +295,7 @@ if __name__ == '__main__':
     key = random.PRNGKey(44)
 
     # MPC setting
-    PH = 48
+    PH = 96
     CH = 1
     dt = 900
     nsteps_per_hour = int(3600 / dt)
@@ -315,7 +315,7 @@ if __name__ == '__main__':
 
     # Experiment settings
     ts = 195*24*3600
-    ndays = 1
+    ndays = 7
     te = ndays*24*3600 + ts
 
     # get predictor
@@ -347,7 +347,7 @@ if __name__ == '__main__':
     state = jnp.array([20, 35.8, 26.])    
     # initialize random seeds for noises in measurements
     keys = random.split(key, int((te-ts)/dt))
-    mu_noise = 0.
+    mu_noise = 0.5
 
     # initialize output 
     u_opt  = []

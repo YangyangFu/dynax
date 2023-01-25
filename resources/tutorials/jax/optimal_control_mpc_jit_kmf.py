@@ -393,9 +393,8 @@ if __name__ == '__main__':
     # get predictor
     predictor = {}
     # [Cai, Cwe, Cwi, Re, Ri, Rw, Rg]
-    predictor['zone_model'] = jnp.array([10838.6513671875, 1000000.0, 10000000.0,
-                                        8.894198417663574, 0.5456274747848511, 
-                                        1.047658085823059, 9.346653938293457])
+    predictor['zone_model'] = jnp.array([6.9789902e+03, 2.1591113e+04, 1.8807944e+05, 3.4490612e+00,
+                                         4.9556872e-01, 9.8289281e-02, 4.6257420e+00])
     # get zone model
     Cai, Cwe, Cwi, Re, Ri, Rw, Rg = predictor['zone_model']
     A, B, C, D = get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg)
