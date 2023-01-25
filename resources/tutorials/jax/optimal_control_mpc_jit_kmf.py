@@ -367,7 +367,7 @@ if __name__ == '__main__':
     key = random.PRNGKey(44)
 
     # MPC setting
-    PH = 48
+    PH = 24
     CH = 1
     dt = 900
     nsteps_per_hour = int(3600 / dt)
