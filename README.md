@@ -64,9 +64,27 @@ The example shew with large RC, the first-order gradient method that requires tu
 
 
 
-### Model-based DRL
+### DRL
+
+#### Model-based DRL to Support Value Iteration
 
 
+#### Explicit Optimization Policy-based DRL
+
+check the paper at https://web.stanford.edu/~boyd/papers/pdf/learning_cocps.pdf
+
+and 
+
+```
+B. Amos, I. Jimenez, J. Sacks, B. Boots, and J. Z. Kolter. Dierentiable MPC for endto-
+end planning and control. In Advances in Neural Information Processing Systems,
+pages 8299{8310, 2018.
+```
+
+```
+M. Okada, L. Rigazio, and T. Aoshima. Path integral networks: End-to-end dierentiable
+optimal control. arXiv preprint arXiv:1706.09597, 2017.
+```
 
 # Contact
 
