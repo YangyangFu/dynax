@@ -145,7 +145,7 @@ def forward(func, ts, te, dt, xP0, solver, args):
     return time_steps, xP_all
 
 # load training data - 1-min sampling rate
-data = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
+data = pd.read_csv('./disturbance_1min.csv', index_col=[0])
 index = range(0, len(data)*60, 60)
 data.index = index
 

@@ -63,7 +63,7 @@ def zone_state_space(t, x, A, B, d):
 
 # get some data
 dt = 3600
-disturbances = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
+disturbances = pd.read_csv('./disturbance_1min.csv', index_col=[0])
 n = len(disturbances)
 index = range(0, n*60, 60)
 disturbances.index = index

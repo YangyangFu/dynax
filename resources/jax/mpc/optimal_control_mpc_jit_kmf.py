@@ -374,7 +374,7 @@ if __name__ == '__main__':
 
     # Get pre-stored disturbances generated from EPlus
     t_base = 181*24*3600 # 7/1
-    dist = pd.read_csv('./data/disturbance_1min.csv', index_col=[0])
+    dist = pd.read_csv('./disturbance_1min.csv', index_col=[0])
     n = len(dist)
     index = range(t_base, t_base + n*60, 60)
     dist.index = index
