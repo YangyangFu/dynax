@@ -38,12 +38,13 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-${CONDA_VERSION}
     rm miniconda.sh miniconda.md5 && \
     ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh && \
     echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc && \
-    #echo "conda activate base" >> ~/.bashrc && \
+    echo "conda activate base" >> ~/.bashrc && \
     find /opt/conda/ -follow -type f -name '*.a' -delete && \
     find /opt/conda/ -follow -type f -name '*.js.map' -delete && \
     /opt/conda/bin/conda clean -afy
 
 # Install  
+# add ipykernel for jupyter notebook in devcontainer
 RUN conda update conda && \
     conda config --add channels conda-forge && \
     conda install pip \
@@ -51,7 +52,8 @@ RUN conda update conda && \
     matplotlib \
     scipy \
     numpy \
-    pandas && \
+    pandas \
+    ipykernel && \
     conda clean -ya
 
 RUN pip install diffrax optax flax equinox
@@ -80,3 +82,9 @@ RUN export uid=1000 gid=1000 && \
 
 USER developer
 ENV HOME /home/developer
+WORKDIR $HOME
+
+# activate conda environment
+RUN conda init bash && \
+    . ~/.bashrc
+SHELL ["conda", "run", "-n", "base", "/bin/bash", "-c"]

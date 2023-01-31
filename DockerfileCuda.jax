@@ -50,7 +50,8 @@ RUN conda update conda && \
     matplotlib \
     scipy \
     numpy \
-    pandas && \
+    pandas \
+    ipykernel && \
     conda clean -ya
 
 # Install jax ecosystem in cuda
@@ -82,3 +83,8 @@ RUN export uid=1000 gid=1000 && \
 
 USER developer
 ENV HOME /home/developer
+
+# activate conda environment
+RUN conda init bash && \
+    . ~/.bashrc
+SHELL ["conda", "run", "-n", "base", "/bin/bash", "-c"]

@@ -14,7 +14,7 @@ DOCKERFILE_JAX_CUDA = DockerfileCuda.jax
 build_jl: 
 	docker build -f ${DOCKERFILE_JL} --no-cache --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JL} .
 
-build_jax:
+build_jax_cpu:
 	docker build -f ${DOCKERFILE_JAX} --no-cache --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JAX_CPU} .
 
 build_jax_cuda:
