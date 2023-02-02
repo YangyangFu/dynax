@@ -3,5 +3,17 @@
 {
 	"name": "jax-cpu",
 	"image": "yangyangfu/diffbuildings-jax-cpu:latest",
-	"runArgs": ["--rm", "-it"]
+	"runArgs": [
+		"--rm",
+		"-it"
+	],
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-toolsai.jupyter",
+				"ms-python.python",
+				"yzhang.markdown-all-in-one"
+			]
+		}
+	}
 }
