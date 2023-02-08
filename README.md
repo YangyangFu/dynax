@@ -1,5 +1,6 @@
-# DiffBuildings
-This repo implements a differentiable simulator for building energy systems to support forward simulation, parameter inference and optimal control.
+# Dynax
+
+Dynamics in Jax (Dynax): This repo implements a differentiable simulator for building energy systems to support forward simulation, parameter inference and optimal control.
 
 # Software Architecture
 ![structure](./doc/structure.png)
