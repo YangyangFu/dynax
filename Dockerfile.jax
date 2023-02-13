@@ -48,25 +48,21 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-${CONDA_VERSION}
 RUN conda update conda && \
     conda config --add channels conda-forge && \
     conda install pip \
-    jax \
+    jax==0.4.3 \
+    jaxlib==0.4.3 \
     matplotlib \
     scipy \
     numpy \
     pandas \
-    ipykernel && \
+    ipykernel \
+    numpyro && \
     conda clean -ya
 
 RUN pip install diffrax optax flax equinox
 
 # install convex optimization package
 RUN pip install --upgrade pip && \
-    pip install cvxpy==1.3.0 diffcp cvxpylayers
-
-# install probalistic programming package
-RUN conda update conda && \
-    conda config --add channels conda-forge && \
-    conda install numpyro && \
-    conda clean -ya
+    pip install cvxpy==1.3.0 diffcp cvxpylayers gymnasium==0.27.1
 
 # X forwarding 
 # render using X11
