@@ -9,6 +9,7 @@ from torch.autograd import grad, backward
 from torchdiffeq import odeint
 import torch.optim as optim
 
+
 def get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg):
     A = torch.zeros((3, 3))
     B = torch.zeros((3, 5))
@@ -38,38 +39,38 @@ def get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg):
 class LSSMWithConstantInputs(torch.nn.Module):
     def __init__(self, A, B, C, D, d):
         super(LSSMWithConstantInputs, self).__init__()
-        self.A = A # state matrix must be 3x3
-        self.B = B # input vector must be 3x5
-        self.C = C # output vector must be 1x3
-        self.D = D # 
-        self.d = d # input vector must be 5x1
+        self.A = A  # state matrix must be 3x3
+        self.B = B  # input vector must be 3x5
+        self.C = C  # output vector must be 1x3
+        self.D = D
+        self.d = d  # input vector must be 5x1
 
-    def forward(self,t, x):
-        x = x.reshape(-1, 1) # reshape from (3) to (3,1)
-        
-        dx = torch.matmul(self.A, x) + torch.matmul(self.B, self.d) # (3,1)
-        dx = dx.reshape(-1) # reshape from (3,1) to (3)
+    def forward(self, t, x):
+        x = x.reshape(-1, 1)  # reshape from (3) to (3,1)
+
+        dx = torch.matmul(self.A, x) + torch.matmul(self.B, self.d)  # (3,1)
+        dx = dx.reshape(-1)  # reshape from (3,1) to (3)
 
         return dx
 
+# simulator
 class Simulator(torch.nn.Module):
-    def __init__(self,params):
-        super(Simulator, self).__init__(self, params, ts, te, dt, x0, d, solver)
-        self.params = torch.nn.Parameter(torch.as_tensor(params))
+    def __init__(self, params, ts, te, dt, x0, d, solver):
+        super(Simulator, self).__init__()
+        self.params = torch.nn.Parameter(torch.as_tensor(params), requires_grad=True)
         self.ts = ts
-        self.te = te 
-        self.dt = dt 
+        self.te = te
+        self.dt = dt
         self.x0 = x0
         self.odeint = odeint
         self.d = d
         self.solver = solver
         self.t = torch.arange(self.ts, self.te, self.dt)
-        
+
         self.A, self.B, self.C, self.D = get_ABCD(*params)
-        
 
     def forward(self):
-        
+
         ## solve odes for given time steps with piece-wise constant inputs
         # initialize x0
         x = self.x0
@@ -78,8 +79,7 @@ class Simulator(torch.nn.Module):
         # main loop
         for i in range(len(self.t)-1):
             # inputs at time ti
-            arg_i = (A, B, d[i, :])
-            di = self.d[i,:].reshape(1,-1)
+            di = self.d[i, :].reshape(-1, 1)
             rhs = LSSMWithConstantInputs(self.A, self.B, self.C, self.D, di)
             # solve ode for ti to ti+1
             x = odeint(rhs, x, self.t[i:i+2], method=self.solver)
@@ -89,14 +89,10 @@ class Simulator(torch.nn.Module):
             x_all = torch.cat((x_all, x), dim=0)
             # reshape for next iteration
             x = x.reshape(-1)
-            
+
         return x_all
 
-
-
 ### Parameter Inference
-
-
 # load training data - 1-min sampling rate
 data = pd.read_csv('./disturbance_1min.csv', index_col=[0])
 index = range(0, len(data)*60, 60)
@@ -127,35 +123,8 @@ solver = 'euler'
 scale = torch.from_numpy(np.array([3.0E4, 5.0E5, 5.0E6, 10., 5., 10., 50., 36.0, 30.0])).float()
 #scale = jnp.array([1.0E5, 3.0E4, 5.0E5, 5., 5., 5., 5., 36.0, 30.0])
 
-def forward_parameters(p, x, ts, te, dt, solver, d, scale):
-    """
-    p is [Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0]
-    x is Tz0
-    """
-    #Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0 = p['rc']
-    rc_norm = p['rc']
-    rc = rc_norm*scale
-    # scale up to normal range
-    Cai, Cwe, Cwi, Re, Ri, Rw, Rg, Twe0, Twi0 = rc
-
-    A, B, C, D = get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg)
-    args = (A, B, d)
-
-    # intial point
-    x0 = torch.asarray([x, Twe0, Twi0])
-
-    # forward calculation
-    t, x = forward(zone_state_space, ts, te, dt, x0, solver, args)
-
-    return t, x
-
-
-def model(p, x): return forward_parameters(p, x, ts, te, dt, solver, d, scale)
-
-
 # loss function
-def loss_fcn(p, x, y_true, p_lb, p_ub):
-    _, y_pred = model(p, x)
+def loss_fcn_customized(y_pred, y_true, p_lb, p_ub, p):
     loss = np.mean((y_pred[1:, 0] - y_true)**2)
 
     penalty = np.sum(torch.nn.Relu(
@@ -170,53 +139,43 @@ def loss_fcn(p, x, y_true, p_lb, p_ub):
 d = torch.from_numpy(data_train.values[:, :5]).float()
 y_train = torch.from_numpy(data_train.values[:, 5]).float()
 
-"""
-def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransformation, p_lb, p_ub) -> optax.Params:
-    # initialize params
-    states = optimizer.init(params)
-    x, y = data
-
-    @jit
-    def step(params, states, x, y, p_lb, p_ub):
-        loss, grads = jax.value_and_grad(loss_fcn)(params, x, y, p_lb, p_ub)
-        updates, states = optimizer.update(grads, states, params)
-        params = optax.apply_updates(params, updates)
-
-        return params, states, loss, grads
-
-    for epoch in range(n_epochs):
-        params, states, loss, grads = step(params, states, x, y, p_lb, p_ub)
-        if epoch % 1000 == 0:
-            print(f'epoch {epoch}, training loss: {loss}')
-            #print(grads['rc'].max(), grads['rc'].min())
-
-    return params
-"""
-
 ## Run optimization for inference
 # parameter settings
-#p_lb = torch.from_numpy(np.array([1.0E3, 1.0E4, 1.0E5, 1.0, 1E-01, 1.0, 1.0, 20.0, 20.0]))
-#p_ub = torch.from_numpy(np.array([1.0E5, 3.0E4, 3.0E5, 10., 1., 10., 10., 35.0, 30.0]))
-p_lb = torch.from_numpy(np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.6, 0.65]))
-p_ub = torch.from_numpy(np.array([1., 1., 1., 1., 1., 1., 1., 1., 1.]))
+p_lb = torch.from_numpy(np.array([1.0E3, 1.0E4, 1.0E5, 1.0, 1E-01, 1.0, 1.0]))
+p_ub = torch.from_numpy(np.array([1.0E5, 3.0E4, 3.0E5, 10., 1., 10., 10.]))
+#p_lb = torch.from_numpy(np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]))
+#p_ub = torch.from_numpy(np.array([1., 1., 1., 1., 1., 1., 1.]))
 #p0 = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394, 1.1442776918411255, 5.741048812866211, 34.82638931274414, 26.184139251708984])
 
 p0 = p_ub
-p0 = torch.from_numpy(np.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.8, 0.8]))
+#p0 = torch.from_numpy(np.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]))
 
 print(p0, x0)
-print(loss_fcn({'rc': p0}, x0, y_train, p_lb, p_ub))
+#print(loss_fcn({'rc': p0}, x0, y_train, p_lb, p_ub))
 
 n_epochs = 100000  # 5000000
 
+sim = Simulator(p0, ts, te, dt, x0, d, solver)
+for name, param in sim.named_parameters():
+    print(name, param)
+    print(sim.state_dict())
 
-initial_params = {'rc': p0}
-optimizer = optim.Adam(initial_params, learning_rate=1e-3)
+optimizer = optim.Adam(sim.parameters(), lr=1e-3)
+loss = torch.nn.MSELoss
+#loss = torch.autograd.Variable(torch.nn.MSELoss(), requires_grad=True)
 
 s = time.time()
 for i in range(n_epochs):
     optimizer.zero_grad()
-
+    y_pred = sim()[:,0]
+    loss_value = loss()(y_pred, y_train)
+    loss_value = torch.autograd.Variable(loss_value, requires_grad=True)
+    loss_value.backward()
+    optimizer.step()
+    if i % 1000 == 0:
+        print(f"Epoch {i} loss: {loss_value.item()}")
+        print(sim.parameters())
+params = sim.parameters()
 e = time.time()
 print(f"execution time is: {e-s} seconds !")
 
@@ -227,10 +186,8 @@ te = ts + n*dt
 d = data.values[:, :5]
 y = data.values[:, 5]
 forward_ts = time.time()
-def model(p, x): return forward_parameters(p, x, ts, te, dt, solver, d, scale)
-
-
-t_pred, ys_pred = model(params, x0)
+sim_final = Simulator(params, ts, te, dt, x0, d, solver)
+t_pred, ys_pred = sim_final()
 forward_te = time.time()
 print(f"single forward simulation costs {forward_te-forward_ts} s!")
 y_pred = ys_pred[:, 0]
@@ -246,13 +203,8 @@ plt.legend()
 plt.savefig('parameter_inference.png')
 
 # save the parameters
-params_tolist = [float(p) for p in params['rc']*scale]
+params_tolist = [float(p) for p in params*scale]
 with open('zone_coefficients.json', 'w') as f:
     json.dump(params_tolist, f)
 
-A, B, C, D = get_ABCD(*initial_params['rc'][:-2])
-print(jnp.linalg.eig(A))
-
-A, B, C, D = get_ABCD(*params['rc'][:-2])
-print(jnp.linalg.eig(A))
 
