@@ -1,0 +1,17 @@
+FROM yangyangfu/mpcdrl:cpu_py3 
+
+USER root
+# Install  
+# add ipykernel for jupyter notebook in devcontainer
+RUN conda update conda && \
+    conda config --add channels conda-forge && \
+    conda install ipykernel && \
+    conda clean -ya
+
+# install convex optimization package
+RUN pip install --upgrade pip && \
+    pip install torchdiffeq
+
+USER developer
+
+WORKDIR $HOME
