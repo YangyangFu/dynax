@@ -1,15 +1,18 @@
 import torch
-from torch.autograd import grad, backward
 import numpy as np
 import json
 import pandas as pd
-from torchdiffeq import odeint 
+import time
+import matplotlib.pyplot as plt
 
+from torch.autograd import grad, backward
+from torchdiffeq import odeint
+import torch.optim as optim
 
 def get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg):
-    A = np.zeros((3, 3))
-    B = np.zeros((3, 5))
-    C = np.zeros((1, 3))
+    A = torch.zeros((3, 3))
+    B = torch.zeros((3, 5))
+    C = torch.zeros((1, 3))
     A[0, 0] = -1/Cai*(1/Rg+1/Ri)
     A[0, 2] = 1/(Cai*Ri)
     A[1, 1] = -1/Cwe*(1/Re+1/Rw)
@@ -27,76 +30,72 @@ def get_ABCD(Cai, Cwe, Cwi, Re, Ri, Rw, Rg):
 
     C[0, 0] = 1
 
-
     D = 0
 
     return A, B, C, D
 
+# state space model
+class LSSMWithConstantInputs(torch.nn.Module):
+    def __init__(self, A, B, C, D, d):
+        super(LSSMWithConstantInputs, self).__init__()
+        self.A = A # state matrix must be 3x3
+        self.B = B # input vector must be 3x5
+        self.C = C # output vector must be 1x3
+        self.D = D # 
+        self.d = d # input vector must be 5x1
 
-# right-hand side 
-def zone_state_space(t, x, A, B, d):
-    x = x.reshape(-1, 1)
-    d = d.reshape(-1, 1)
-    dx = np.matmul(A, x) + np.matmul(B, d)
-    dx = dx.reshape(-1)
+    def forward(self,t, x):
+        x = x.reshape(-1, 1) # reshape from (3) to (3,1)
+        
+        dx = torch.matmul(self.A, x) + torch.matmul(self.B, self.d) # (3,1)
+        dx = dx.reshape(-1) # reshape from (3,1) to (3)
 
-    return dx
-"""
-def forward(func, ts, te, dt, x0, solver, args):
-    # unpack args
-    A, B, d = args
+        return dx
 
-    # ode formulation
-    term = ODETerm(func)
+class Simulator(torch.nn.Module):
+    def __init__(self,params):
+        super(Simulator, self).__init__(self, params, ts, te, dt, x0, d, solver)
+        self.params = torch.nn.Parameter(torch.as_tensor(params))
+        self.ts = ts
+        self.te = te 
+        self.dt = dt 
+        self.x0 = x0
+        self.odeint = odeint
+        self.d = d
+        self.solver = solver
+        self.t = torch.arange(self.ts, self.te, self.dt)
+        
+        self.A, self.B, self.C, self.D = get_ABCD(*params)
+        
 
-    # initial step
-    t = ts
-    tnext = t + dt
-    dprev = d[0, :]
-    args = (A, B, dprev)
-    state = solver.init(term, t, tnext, x0, args)
+    def forward(self):
+        
+        ## solve odes for given time steps with piece-wise constant inputs
+        # initialize x0
+        x = self.x0
+        # initialize output
+        x_all = self.x0.reshape(1, -1)
+        # main loop
+        for i in range(len(self.t)-1):
+            # inputs at time ti
+            arg_i = (A, B, d[i, :])
+            di = self.d[i,:].reshape(1,-1)
+            rhs = LSSMWithConstantInputs(self.A, self.B, self.C, self.D, di)
+            # solve ode for ti to ti+1
+            x = odeint(rhs, x, self.t[i:i+2], method=self.solver)
+            # only take the last step
+            x = x[-1, :].reshape(1, -1)
+            # concatenate
+            x_all = torch.cat((x_all, x), dim=0)
+            # reshape for next iteration
+            x = x.reshape(-1)
+            
+        return x_all
 
-    # main loop
-    i = 0
-    #x = x0
-
-    # jit-ed scan to replace while loop
-#    cond_func = lambda t: t < te
-    def step_at_t(carryover, t, term, dt, te, A, B, d):
-        # the lax.scannable function to computer ODE/DAE systems
-        x = carryover[0]
-        state = carryover[1]
-        i = carryover[2]
-        args = (A, B, d[i, :])
-        tnext = jnp.minimum(t + dt, te)
-
-        xnext, _, _, state, _ = solver.step(
-            term, t, tnext, x, args, state, made_jump=False)
-        i += 1
-
-        return (xnext, state, i), x
-
-    carryover_init = (x0, state, i)
-    step_func = partial(step_at_t, term=term, dt=dt, te=te, A=A, B=B, d=d)
-    time_steps = np.arange(ts, te+1, dt)
-    carryover_final, x_all = lax.scan(
-        step_func, init=carryover_init, xs=time_steps)
-
-    return time_steps, x_all
-"""
-
-def forward(func, ts, te, dt, x0, solver, args):
-    # unpack args
-    A, B, d = args
-
-    # solve odes
-    t = np.arange(ts, te+1, dt)
-    x = odeint(func, x0, t, method=solver, args=(A, B, d))
-
-    return t, x
 
 
 ### Parameter Inference
+
 
 # load training data - 1-min sampling rate
 data = pd.read_csv('./disturbance_1min.csv', index_col=[0])
@@ -104,7 +103,7 @@ index = range(0, len(data)*60, 60)
 data.index = index
 
 # sample every hour
-dt = 3600
+dt = 3600.
 data = data.groupby([data.index // dt]).mean()
 n = len(data)
 
@@ -116,18 +115,17 @@ data_train = data.iloc[:n_train, :]
 data_test = data.iloc[n_train:, :]
 
 # define training parameters
-ts = 0
+ts = 0.
 te = ts + n_train*dt
+d = torch.from_numpy(data_train.values[:, :5]).float()
+
+x0 = torch.asarray([20., 30., 26.])
+#solver = Dopri5()
 solver = 'euler'
 
 # scale parameters
-scale = np.array([3.0E4, 5.0E5, 5.0E6, 10., 5., 10., 50., 36.0, 30.0])
+scale = torch.from_numpy(np.array([3.0E4, 5.0E5, 5.0E6, 10., 5., 10., 50., 36.0, 30.0])).float()
 #scale = jnp.array([1.0E5, 3.0E4, 5.0E5, 5., 5., 5., 5., 36.0, 30.0])
-# forward steps
-
-def f(t, x, args): return zone_state_space(
-    t, x, *args)  # args[0], args[1], args[2])
-
 
 def forward_parameters(p, x, ts, te, dt, solver, d, scale):
     """
@@ -144,10 +142,10 @@ def forward_parameters(p, x, ts, te, dt, solver, d, scale):
     args = (A, B, d)
 
     # intial point
-    x0 = jnp.array([x, Twe0, Twi0])
+    x0 = torch.asarray([x, Twe0, Twi0])
 
     # forward calculation
-    t, x = forward(f, ts, te, dt, x0, solver, args)
+    t, x = forward(zone_state_space, ts, te, dt, x0, solver, args)
 
     return t, x
 
@@ -160,40 +158,19 @@ def loss_fcn(p, x, y_true, p_lb, p_ub):
     _, y_pred = model(p, x)
     loss = np.mean((y_pred[1:, 0] - y_true)**2)
 
-    penalty = np.sum(jax.nn.relu(
-        p['rc'] - p_ub) + jax.nn.relu(p_lb - p['rc']))
+    penalty = np.sum(torch.nn.Relu(
+        p['rc'] - p_ub) + torch.nn.Relu(p_lb - p['rc']))
 
     norm = (p['rc'] - p_lb) / (p_ub - p_lb)
-    reg = jnp.linalg.norm(norm, 2)
+    reg = torch.linalg.norm(norm, 2)
     return loss + penalty
 
 
 # data preparation
-d = data_train.values[:, :5]
-y_train = data_train.values[:, 5]
-d = jax.device_put(d)
-y_train = jax.device_put(y_train)
+d = torch.from_numpy(data_train.values[:, :5]).float()
+y_train = torch.from_numpy(data_train.values[:, 5]).float()
 
 """
-# A naive gradient descent implementation
-# update 
-@jit 
-def update(p, x, y_true, lr = 0.1):
-    return p - lr*jax.grad(loss_fcn)(p, x, y_true)
-
-for i in range(nepochs):
-    p = update(p, x0, y_train, lr)
-
-    if i % 100 == 0:
-        print(f"======= epoch: {i}")
-        loss = loss_fcn(p, x0, y_train)
-        print(f" training loss is: {loss}")
-
-print(p)
-print(loss_fcn(p, x0, y_train))
-"""
-
-
 def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransformation, p_lb, p_ub) -> optax.Params:
     # initialize params
     states = optimizer.init(params)
@@ -214,39 +191,32 @@ def fit(data, n_epochs, params: optax.Params, optimizer: optax.GradientTransform
             #print(grads['rc'].max(), grads['rc'].min())
 
     return params
-
+"""
 
 ## Run optimization for inference
 # parameter settings
-#p_lb = jnp.array([1.0E3, 1.0E4, 1.0E5, 1.0, 1E-01, 1.0, 1.0, 20.0, 20.0])
-#p_ub = jnp.array([1.0E5, 3.0E4, 3.0E5, 10., 1., 10., 10., 35.0, 30.0])
-p_lb = jnp.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.6, 0.65])
-p_ub = jnp.array([1., 1., 1., 1., 1., 1., 1., 1., 1.])
+#p_lb = torch.from_numpy(np.array([1.0E3, 1.0E4, 1.0E5, 1.0, 1E-01, 1.0, 1.0, 20.0, 20.0]))
+#p_ub = torch.from_numpy(np.array([1.0E5, 3.0E4, 3.0E5, 10., 1., 10., 10., 35.0, 30.0]))
+p_lb = torch.from_numpy(np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.6, 0.65]))
+p_ub = torch.from_numpy(np.array([1., 1., 1., 1., 1., 1., 1., 1., 1.]))
 #p0 = jnp.array([9998.0869140625, 99998.0859375, 999999.5625, 9.94130802154541, 0.6232420802116394, 1.1442776918411255, 5.741048812866211, 34.82638931274414, 26.184139251708984])
 
 p0 = p_ub
-p0 = jnp.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.8, 0.8])
+p0 = torch.from_numpy(np.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.8, 0.8]))
 
-x0 = jax.device_put(y_train[0])
 print(p0, x0)
 print(loss_fcn({'rc': p0}, x0, y_train, p_lb, p_ub))
 
 n_epochs = 100000  # 5000000
-schedule = optax.exponential_decay(
-    init_value=1e-4,
-    transition_steps=150000,
-    decay_rate=0.99,
-    transition_begin=0,
-    staircase=False,
-    end_value=1e-05
-)
-optimizer = optax.chain(
-    optax.adamw(learning_rate=1e-04)
-)
+
 
 initial_params = {'rc': p0}
+optimizer = optim.Adam(initial_params, learning_rate=1e-3)
+
 s = time.time()
-params = fit((x0, y_train), n_epochs, initial_params, optimizer, p_lb, p_ub)
+for i in range(n_epochs):
+    optimizer.zero_grad()
+
 e = time.time()
 print(f"execution time is: {e-s} seconds !")
 
