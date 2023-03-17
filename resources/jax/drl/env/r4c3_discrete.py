@@ -8,6 +8,7 @@ from gymnasium import logger, spaces
 from gymnasium.envs.classic_control import utils
 from gymnasium.error import DependencyNotInstalled
 from gymnasium.vector.utils import batch_space
+from scipy import interpolate
 
 
 class DiscreteLinearStateSpaceEnv(gym.Env):
@@ -19,14 +20,9 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
     The pendulum is placed upright on the cart and the goal is to balance the pole by applying forces
      in the left and right direction on the cart.
     ## Action Space
-    The action is a `ndarray` with shape `(1,)` which can take values `{0, 1}` indicating the direction
-     of the fixed force the cart is pushed with.
-    - 0: Push cart to the left
-    - 1: Push cart to the right
-    **Note**: The velocity that is reduced or increased by the applied force is not fixed and it depends on the angle
-     the pole is pointing. The center of gravity of the pole varies the amount of energy needed to move the cart underneath it
+
     ## Observation Space
-    The observation is a `ndarray` with shape `(4,)` with the values corresponding to the following positions and velocities:
+    The observation space is the state space, which assumes fully-observable states in the dynamic system:
     | Num | Observation           | Min                 | Max               |
     |-----|-----------------------|---------------------|-------------------|
     | 0   | Cart Position         | -4.8                | 4.8               |
@@ -40,8 +36,8 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
     -  The pole angle can be observed between  `(-.418, .418)` radians (or **±24°**), but the episode terminates
        if the pole angle is not in the range `(-.2095, .2095)` (or **±12°**)
     ## Rewards
-    Since the goal is to keep the pole upright for as long as possible, a reward of `+1` for every step taken,
-    including the termination step, is allotted. The threshold for rewards is 475 for v1.
+    The state space outputs are modeled as reward.
+
     ## Starting State
     All observations are assigned a uniformly random value in `(-0.05, 0.05)`
     ## Episode End
@@ -69,11 +65,13 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         Bd, 
         C, 
         D, 
+        x0,
         x_high, 
         x_low, 
         n_actions, 
         u_high, 
-        u_low, 
+        u_low,
+        reward_fcn: Optional[function] = None, 
         ts: Optional[int] = 0, 
         te: Optional[int] = 1,
         dt: Optional[int] = 0.1,
@@ -85,14 +83,19 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         self.Bd = Bd
         self.C = C 
         self.D = D
+        self.x0 = x0 # initial state
         self.integrator = "euler"
         self.u_high = np.array(u_high)
         self.u_low = np.array(u_low)
+
+        # reward function
+        self.reward_fcn = reward_fcn        
 
         # simulation 
         self.ts = ts
         self.te = te 
         self.dt = dt 
+        self.t = self.ts # initial model clock
 
         # x high limit 
         high = np.array(x_high,
@@ -102,6 +105,9 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         low = np.array(x_low,
             dtype=np.float32,
         ) if type(x_low) is not np.ndarray else x_low.astype(np.float32)
+
+        # disturbance
+        self.disturbance = None 
 
         # discrete action space
         # single action
@@ -114,6 +120,9 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
             self.action_space = spaces.MultiDiscrete(n_actions)
         
         self.observation_space = spaces.Box(low, high, dtype=np.float32)
+
+        # reward
+        self.reward = 0
 
         # skpi render mode
         self.render_mode = render_mode
@@ -132,6 +141,7 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
     def _linear_state_space(self, state, action, disturbance):
         state = np.array(state)
         xdot = self.A @ state + self.Bu @ action + self.Bd @ disturbance
+        y = self.C @ state + self.D @ action
 
         # solve with integrator
         if self.integrator == "euler":
@@ -139,15 +149,14 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         else:
             logger.error(f"integrator {self.integrator} is not implemented. ")
 
-        return (s for s in state_next)
+        return (state_next, y)
         
     def model(self, state, action, disturbance):
         # map discrete action to control inputs
-        action = self.action_to_control(action)
+        action = self._action_to_control(action)
 
-        return self.linear_state_space(state, action, disturbance)
+        return self._linear_state_space(state, action, disturbance)
         
-
     def _action_to_control(self, action):
         if isinstance(self.action_space, gymnasium.spaces.discrete.Discrete):
             control_inputs = action/(self.n_actions-1)*(self.u_high - self.u_low) + self.u_low
@@ -162,45 +171,20 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         ), f"{action!r} ({type(action)}) invalid"
         assert self.state is not None, "Call reset before using step method."
         state = self.state
-        # get disturbances
-        disturbance = self.get_disturbance(t)
 
-        # next states
-        self.state = self.model(state, action, disturbance)
-        x, x_dot, theta, theta_dot = self.state
-
-        # check terminal conditions
+        # advance one step
+        self.state, reward = self.model(state, action, self.disturbance)
+        # update model clock
+        self.t += self.dt
+        
+        # terminal conditions: simulation over time, state over bounds
         terminated = bool(
-            x < -self.x_threshold
-            or x > self.x_threshold
-            or theta < -self.theta_threshold_radians
-            or theta > self.theta_threshold_radians
+            self.t >= self.te
         )
 
-        # reward
-        if not terminated:
-            reward = 1.0
-        elif self.steps_beyond_terminated is None:
-            # Pole just fell!
-            self.steps_beyond_terminated = 0
-            reward = 1.0
-        else:
-            if self.steps_beyond_terminated == 0:
-                logger.warn(
-                    "You are calling 'step()' even though this "
-                    "environment has already returned terminated = True. You "
-                    "should always call 'reset()' once you receive 'terminated = "
-                    "True' -- any further steps are undefined behavior."
-                )
-            self.steps_beyond_terminated += 1
-            reward = 0.0
+        # render: NOT IMPLEMENTED
 
-        if self.render_mode == "human":
-            self.render()
         return np.array(self.state, dtype=np.float32), reward, terminated, False, {}
-
-    def _get_disturbance(self, t):
-        pass
 
     def reset(
         self,
@@ -214,116 +198,199 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         low, high = utils.maybe_parse_reset_bounds(
             options, -0.05, 0.05  # default low
         )  # default high
-        self.state = self.np_random.uniform(low=low, high=high, size=(4,))
-        self.steps_beyond_terminated = None
+        # initial state + random noise  
+        self.t = self.ts
+        self.state = self.x0 + self.np_random.uniform(low=low, high=high, size=np.array(self.x0).shape)
 
-        if self.render_mode == "human":
-            self.render()
         return np.array(self.state, dtype=np.float32), {}
 
     def render(self):
-        if self.render_mode is None:
-            assert self.spec is not None
-            gym.logger.warn(
-                "You are calling render method without specifying any render mode. "
-                "You can specify the render_mode at initialization, "
-                f'e.g. gym.make("{self.spec.id}", render_mode="rgb_array")'
-            )
-            return
-
-        try:
-            import pygame
-            from pygame import gfxdraw
-        except ImportError as e:
-            raise DependencyNotInstalled(
-                "pygame is not installed, run `pip install gymnasium[classic-control]`"
-            ) from e
-
-        if self.screen is None:
-            pygame.init()
-            if self.render_mode == "human":
-                pygame.display.init()
-                self.screen = pygame.display.set_mode(
-                    (self.screen_width, self.screen_height)
-                )
-            else:  # mode == "rgb_array"
-                self.screen = pygame.Surface(
-                    (self.screen_width, self.screen_height))
-        if self.clock is None:
-            self.clock = pygame.time.Clock()
-
-        world_width = self.x_threshold * 2
-        scale = self.screen_width / world_width
-        polewidth = 10.0
-        polelen = scale * (2 * self.length)
-        cartwidth = 50.0
-        cartheight = 30.0
-
-        if self.state is None:
-            return None
-
-        x = self.state
-
-        self.surf = pygame.Surface((self.screen_width, self.screen_height))
-        self.surf.fill((255, 255, 255))
-
-        l, r, t, b = -cartwidth / 2, cartwidth / 2, cartheight / 2, -cartheight / 2
-        axleoffset = cartheight / 4.0
-        cartx = x[0] * scale + self.screen_width / 2.0  # MIDDLE OF CART
-        carty = 100  # TOP OF CART
-        cart_coords = [(l, b), (l, t), (r, t), (r, b)]
-        cart_coords = [(c[0] + cartx, c[1] + carty) for c in cart_coords]
-        gfxdraw.aapolygon(self.surf, cart_coords, (0, 0, 0))
-        gfxdraw.filled_polygon(self.surf, cart_coords, (0, 0, 0))
-
-        l, r, t, b = (
-            -polewidth / 2,
-            polewidth / 2,
-            polelen - polewidth / 2,
-            -polewidth / 2,
-        )
-
-        pole_coords = []
-        for coord in [(l, b), (l, t), (r, t), (r, b)]:
-            coord = pygame.math.Vector2(coord).rotate_rad(-x[2])
-            coord = (coord[0] + cartx, coord[1] + carty + axleoffset)
-            pole_coords.append(coord)
-        gfxdraw.aapolygon(self.surf, pole_coords, (202, 152, 101))
-        gfxdraw.filled_polygon(self.surf, pole_coords, (202, 152, 101))
-
-        gfxdraw.aacircle(
-            self.surf,
-            int(cartx),
-            int(carty + axleoffset),
-            int(polewidth / 2),
-            (129, 132, 203),
-        )
-        gfxdraw.filled_circle(
-            self.surf,
-            int(cartx),
-            int(carty + axleoffset),
-            int(polewidth / 2),
-            (129, 132, 203),
-        )
-
-        gfxdraw.hline(self.surf, 0, self.screen_width, carty, (0, 0, 0))
-
-        self.surf = pygame.transform.flip(self.surf, False, True)
-        self.screen.blit(self.surf, (0, 0))
-        if self.render_mode == "human":
-            pygame.event.pump()
-            self.clock.tick(self.metadata["render_fps"])
-            pygame.display.flip()
-
-        elif self.render_mode == "rgb_array":
-            return np.transpose(
-                np.array(pygame.surfarray.pixels3d(self.screen)), axes=(1, 0, 2)
-            )
+        pass
 
     def close(self):
-        if self.screen is not None:
-            import pygame
+        pass 
 
-            pygame.display.quit()
-            pygame.quit()
-            self.isopen = False
+class LinearInterpolation(object):
+    def __init__(self, ts, ys):
+        """
+        ts: increasing collections of times, such as [t0, t1, t2, ...]
+        ys: values at ts, NDarray or 1-D array
+        """
+        if len(np.array(ys).shape) == 1:
+            self.interp = interpolate.interp1d(ts, ys)
+        elif len(np.array(ys).shape) > 1:
+            self.interp = interpolate.LinearNDInterpolator(ts, ys)
+        
+    def evaluate(self, t):
+        """
+        evaluate at time t, t should be in ts
+        """
+        return self.interp(t)
+
+class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
+    """
+    RC state space model with discrete control actions
+
+    x = [Tz, Twe, Twi]
+    u = q_hvac
+    d = [Toa, q_conv_i, q_sol_e, q_rad_i]
+    y = [Tz, q_hvac]
+
+    ** Equation
+    xdot = A*x + Bu*u + Bd*d
+    y = C*x + D*u
+    """
+    def __init__(self, 
+        rc_params,
+        x0,
+        x_high, 
+        x_low, 
+        n_actions, 
+        u_high, 
+        u_low, 
+        disturbances,
+        weights: Optional[list[float]] = None,
+        Tz_high: Optional[list[float]] = None,
+        Tz_low: Optional[list[float]] = None,
+        cop: Optional[float] = 3.0,
+        energy_price: Optional[list[float]] = None,
+        ts: Optional[int] = 0, 
+        te: Optional[int] = 1,
+        dt: Optional[int] = 0.1,
+        render_mode: Optional[str] = None):
+        
+        self.Cai, self.Cwe, self.Cwi, self.Re, self.Ri, self.Rw, self.Rg = rc_params
+        
+        # get linear state space
+        self.A, self.Bu, self.Bd, self.C, self.D = self._getABCD()
+
+        # get piece wise continuous disturbance model
+        # t, d = disturbances
+        self.dist = LinearInterpolation(*disturbances)
+        
+        # reward parameters
+        self.cop = cop 
+        self.energy_price = energy_price if not energy_price else np.ones(24) 
+
+        Tz_high_default = [30.0 for i in range(24)]
+        Tz_low_default = [12.0 for i in range(24)]
+        Tz_high_default[8:18] = [26.0]*(18-8)
+        Tz_low_default[8:18] = [22.0]*(18-8)
+        self.Tz_high = Tz_high if Tz_high else Tz_high_default
+        self.Tz_low = Tz_low if Tz_low else Tz_low_default
+
+        self.weights = weights if weights else [1.0, 1.0, 1.0]
+
+        # initialize
+        super(R4C3DiscreteEnv, self).__init__(
+            A = self.A,
+            Bu = self.Bu,
+            Bd = self.Bd,
+            C = self.C,
+            D = self.D,
+            x0 = x0,
+            x_high = x_high, 
+            x_low = x_low, 
+            n_actions = n_actions, 
+            u_high = u_high, 
+            u_low = u_low, 
+            ts = ts, 
+            te = te, 
+            dt = dt,
+            render_mode = render_mode
+            )
+
+    def _getABCD(self):
+        # unpack
+        Cai, Cwe, Cwi, Re, Ri, Rw, Rg = self.rc_params
+        # initialzie
+        A = np.zeros((3, 3))
+        Bu = np.zeros((1, 1))
+        Bd = np.zeros((3, 4))
+        C = np.zeros((2, 3))
+        D = np.zeros((2, 1))
+
+        # set matrix
+        A[0, 0] = -1/Cai*(1/Rg+1/Ri)
+        A[0, 2] = 1/(Cai*Ri)
+        A[1, 1] = -1/Cwe*(1/Re+1/Rw)
+        A[1, 2] = 1/(Cwe*Rw)
+        A[2, 0] = 1/(Cwi*Ri)
+        A[2, 1] = 1/(Cwi*Rw)
+        A[2, 2] = -1/Cwi*(1/Rw+1/Ri)
+        
+        Bu[0, 0] = 1/Cai
+
+        Bd[0, 0] = 1/(Cai*Rg)
+        Bd[0, 1] = 1/Cai
+        Bd[1, 0] = 1/(Cwe*Re)
+        Bd[1, 2] = 1/Cwe
+        Bd[2, 3] = 1/Cwi
+
+        C[0, 0] = 1
+
+        D[1, 0] = 1
+
+        return A, Bu, Bd, C, D
+        
+    def _get_disturbance(self):
+        """
+        system disturbance at time t: use interpolate
+        """
+        return self.dist(self.t)
+
+    def get_objective_terms(self, Tz, q_hvac, action):
+        """
+        q_hvac: control input: negative for cooling
+        action: discrete action for gym
+        """
+        # energy cost
+        h = int(int(self.t)%86400/3600)
+        cost = abs(q_hvac)/self.cop*self.energy_price[h]/self.dt/3600
+
+        # reference violation
+        dTz = max(Tz - self.Tz_high[h], self.Tz_low[h] - Tz, 0)
+        
+        # control slew
+        du = abs((action - self.action_prev)/(self.n_actions-1))
+
+        return [cost, dTz, du]
+
+    def reward_fcn(self, objective):
+        # maximize reward: negate objective
+        # we can overwrite this reward function using gym.wrapper
+
+        energy_cost, max_T_violations, du = objective 
+        w1, w2, w3 = self.weights 
+
+        return -(w1*energy_cost + w2*max_T_violations + w3*du)
+
+    def step(self, action):
+        # get disturbance
+        self.disturbance = self._get_disturbance()
+        
+        # LSSM step
+        state_next, y, terminated, _, _ = super(R4C3DiscreteEnv, self).step(action)
+
+        # unpack output
+        Tz, q_hvac = y 
+
+        # get rewards
+        objective = self.get_objective_terms(Tz, q_hvac, action)
+        reward = self.reward_fcn(objective)
+
+        # update history if needed
+        self.action_prev = action 
+
+        return state_next, reward, terminated, False, {}
+
+    def reset(self, 
+        *,
+        seed: Optional[int] = None,
+        options: Optional[dict] = None,
+        ):
+        # reset previous action for starting 
+        self.action_prev = 0
+
+        return super(R4C3DiscreteEnv, self).reset(seed, options)
+
