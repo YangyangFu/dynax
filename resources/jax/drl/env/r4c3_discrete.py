@@ -1,5 +1,5 @@
 import math
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, Callable, List
 
 import numpy as np
 
@@ -49,10 +49,10 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         x0,
         x_high, 
         x_low, 
-        n_actions, 
+        n_actions: Union[int, List[int]],
         u_high, 
         u_low,
-        reward_fcn: Optional[function] = None, 
+        reward_fcn: Callable[[], float] = None, 
         ts: Optional[int] = 0, 
         te: Optional[int] = 1,
         dt: Optional[int] = 0.1,
@@ -91,9 +91,12 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         self.disturbance = None 
 
         # discrete action space
-        # single action
+        # np.array(scalar).shape = ()
+        if type(n_actions) is int:
+            n_actions = [n_actions]
+        
         n_actions = np.array(n_actions)
-        assert len(n_actions) > 0, "Number of discrete actions cannot be 0 !"
+        
         if len(n_actions) == 1:
             self.action_space = spaces.Discrete(n_actions[0])
         # TODO: multidiscrete not tested yet
@@ -197,11 +200,9 @@ class LinearInterpolation(object):
         ts: increasing collections of times, such as [t0, t1, t2, ...]
         ys: values at ts, NDarray or 1-D array
         """
-        if len(np.array(ys).shape) == 1:
-            self.interp = interpolate.interp1d(ts, ys)
-        elif len(np.array(ys).shape) > 1:
-            self.interp = interpolate.LinearNDInterpolator(ts, ys)
         
+        self.interp = interpolate.interp1d(ts, ys, axis=0, kind="linear", fill_value="extrapolate")
+
     def evaluate(self, t):
         """
         evaluate at time t, t should be in ts
@@ -230,17 +231,17 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         u_high, 
         u_low, 
         disturbances,
-        weights: Optional[list[float]] = None,
-        Tz_high: Optional[list[float]] = None,
-        Tz_low: Optional[list[float]] = None,
+        weights: Optional[List[float]] = None,
+        Tz_high: Optional[List[float]] = None,
+        Tz_low: Optional[List[float]] = None,
         cop: Optional[float] = 3.0,
-        energy_price: Optional[list[float]] = None,
+        energy_price: Optional[List[float]] = None,
         ts: Optional[int] = 0, 
         te: Optional[int] = 1,
         dt: Optional[int] = 0.1,
         render_mode: Optional[str] = None):
         
-        self.Cai, self.Cwe, self.Cwi, self.Re, self.Ri, self.Rw, self.Rg = rc_params
+        self.rc_params = rc_params
         
         # get linear state space
         self.A, self.Bu, self.Bd, self.C, self.D = self._getABCD()
