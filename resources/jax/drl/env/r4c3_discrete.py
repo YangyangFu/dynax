@@ -14,37 +14,18 @@ from scipy import interpolate
 class DiscreteLinearStateSpaceEnv(gym.Env):
     """
     ## Description
-    This environment corresponds to the version of the cart-pole problem described by Barto, Sutton, and Anderson in
-    ["Neuronlike Adaptive Elements That Can Solve Difficult Learning Control Problem"](https://ieeexplore.ieee.org/document/6313077).
-    A pole is attached by an un-actuated joint to a cart, which moves along a frictionless track.
-    The pendulum is placed upright on the cart and the goal is to balance the pole by applying forces
-     in the left and right direction on the cart.
+
     ## Action Space
 
     ## Observation Space
-    The observation space is the state space, which assumes fully-observable states in the dynamic system:
-    | Num | Observation           | Min                 | Max               |
-    |-----|-----------------------|---------------------|-------------------|
-    | 0   | Cart Position         | -4.8                | 4.8               |
-    | 1   | Cart Velocity         | -Inf                | Inf               |
-    | 2   | Pole Angle            | ~ -0.418 rad (-24°) | ~ 0.418 rad (24°) |
-    | 3   | Pole Angular Velocity | -Inf                | Inf               |
-    **Note:** While the ranges above denote the possible values for observation space of each element,
-        it is not reflective of the allowed values of the state space in an unterminated episode. Particularly:
-    -  The cart x-position (index 0) can be take values between `(-4.8, 4.8)`, but the episode terminates
-       if the cart leaves the `(-2.4, 2.4)` range.
-    -  The pole angle can be observed between  `(-.418, .418)` radians (or **±24°**), but the episode terminates
-       if the pole angle is not in the range `(-.2095, .2095)` (or **±12°**)
+
     ## Rewards
     The state space outputs are modeled as reward.
 
     ## Starting State
     All observations are assigned a uniformly random value in `(-0.05, 0.05)`
     ## Episode End
-    The episode ends if any one of the following occurs:
-    1. Termination: Pole Angle is greater than ±12°
-    2. Termination: Cart Position is greater than ±2.4 (center of the cart reaches the edge of the display)
-    3. Truncation: Episode length is greater than 500 (200 for v0)
+
     ## Arguments
     ```python
     import gymnasium as gym
