@@ -17,7 +17,7 @@ class LinearInterpolation(object):
         ys: values at ts, NDarray or 1-D array
         """
         
-        self.interp = interpolate.interp1d(ts, ys, axis=0, kind="linear", fill_value="extrapolate")
+        self.interp = interpolate.interp1d(ts, ys, axis=0, kind="linear", fill_value="nearest")
 
     def evaluate(self, t):
         """
@@ -285,7 +285,7 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         # conditional
         self.history = {}
         if self.n_prev_steps > 0:
-            self.history['Tz'] = [273.15+25]*self.n_prev_steps
+            self.history['Tz'] = [20.]*self.n_prev_steps
             self.history['P'] = [0.]*self.n_prev_steps
 
         # initialize
@@ -343,7 +343,7 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         
 
 
-    def get_objective_terms(self, Tz, q_hvac, action):
+    def _get_objective_terms(self, Tz, q_hvac, action):
         """
         q_hvac: control input: negative for cooling
         action: discrete action for gym
@@ -369,7 +369,7 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
 
         return float(-(w1*energy_cost + w2*max_T_violations + w3*du))
 
-    def _get_observation_space1(self):
+    def _get_observation_space(self):
         # [t, Tz, To, solar, power, price, To for next n steps, solar for next n steps, price for next n steps, Tz from previous m steps, power from previous m steps]
         high = np.array([86400.,35., 40., 4., 4., 1.0]+\
                 [40.]*self.n_next_steps+[4.]*self.n_next_steps+[4.]*self.n_next_steps+\
@@ -381,10 +381,6 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
 
         return spaces.Box(low, high, dtype=np.float32)
 
-    def _get_observation_space(self):
-        high = np.hstack([np.array(self.high), abs(self.u_low)/self.cop])
-        low = np.hstack([np.array(self.low), self.u_high/self.cop])
-        return spaces.Box(low, high, dtype=np.float32)
 
     # TODO: improve the object design, typically users should not overwrite step() method, but providing customized observation, reward and termination
     def step(self, action):
@@ -416,16 +412,30 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
 
         # get rewards
         # -----------------------------------
-        objective = self.get_objective_terms(Tz, q_hvac, action)
+        objective = self._get_objective_terms(Tz, q_hvac, action)
         reward = self._reward_fcn(objective)
 
         # update history if needed
         # -----------------------------------
-        self.action_prev = action 
+        self._update_history(action, Tz, abs(q_hvac)/self.cop)
 
         return obs_next, reward, self.done, False, {}
+    
+    def _update_history(self, action, Tz, power):
+        # update action history
+        self.action_prev = action
 
-    def _get_observation(self, state, y):
+        # update Tz history
+        Tz_history = np.roll(self.history['Tz'], -1)
+        Tz_history[-1] = Tz
+        self.history['Tz'] = Tz_history 
+
+        # update power history
+        power_history = np.roll(self.history['P'], -1)
+        power_history[-1] = power
+        self.history['P'] = power_history
+
+    def _get_observation1(self, state, y):
         # unpack 
         Tz, Twe, Twi = state
         Tz, q_hvac = y
@@ -433,11 +443,21 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         obs = np.hstack([Tz, Twe, Twi, abs(q_hvac)/self.cop], dtype=np.float32) 
         return obs
 
-    def _get_observation1(self):
+    def _get_observation(self, state_next, y):
         # unpack
-        Tz, To, q_hvac = self.state
+        Tz, Twe, Twi  = state_next
+        Tz, q_hvac = y
+        # disturbance: assume q_win is from solar
+        # TODO: it's better to use a weather file to generate solar radiation
+        To, q_int, q_win, q_rad = self._disturbance
+        dists_next_n_steps = self._get_disturbance_next_n_steps()
+        solar_next_n_steps = dists_next_n_steps[:, 2]
+        To_next_n_steps = dists_next_n_steps[:, 0]
+
+        # time
         t = self.t
         h = int(int(t)%86400/3600)
+
         # initialize
         obs = np.zeros(6+self.n_next_steps*3+self.n_prev_steps*2)
 
@@ -445,15 +465,16 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         obs[0] = t
         obs[1] = Tz
         obs[2] = To
-        obs[3] = self.solar[h]
-        obs[4] = self.power[h]
+        obs[3] = q_win
+        obs[4] = abs(q_hvac)/self.cop
         obs[5] = self.energy_price[h]
 
         # set next steps
-        for i in range(self.n_next_steps):
-            obs[6+i] = To
-            obs[6+self.n_next_steps+i] = self.solar[(h+i+1)%24]
-            obs[6+self.n_next_steps*2+i] = self.energy_price[(h+i+1)%24]
+        if self.n_next_steps > 0:
+            for i in range(self.n_next_steps):
+                obs[6+i] = To_next_n_steps[i]
+                obs[6+self.n_next_steps+i] = solar_next_n_steps[i]
+                obs[6+self.n_next_steps*2+i] = self.energy_price[(h+i+1)%24]
 
         # set previous steps
         if self.n_prev_steps > 0:
@@ -463,6 +484,20 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
 
         return obs
 
+    def _get_disturbance_next_n_steps(self):
+        """
+        get solar radiation for [t-n_prev_steps, t+n_next_steps]
+
+        """
+        # initialize 
+        t = [self.t + self.dt*(i+1) for i in range(0, self.n_next_steps)]
+
+        # disturbance
+        disturbance_next_n_steps = self.dist_fcn.evaluate(t)
+
+        return disturbance_next_n_steps
+        
+
     def reset(self, 
         *,
         seed: Optional[int] = None,
@@ -470,6 +505,9 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         ):
         # reset previous action for starting 
         self.action_prev = 0
+        if self.n_prev_steps > 0:
+            self.history['Tz'] = np.array([20.]*self.n_prev_steps)
+            self.history['P'] = np.array([0.]*self.n_prev_steps)
 
         state_init, _ = super().reset(seed=seed)
 
