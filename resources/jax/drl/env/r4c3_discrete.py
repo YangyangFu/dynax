@@ -10,29 +10,24 @@ from gymnasium.error import DependencyNotInstalled
 from gymnasium.vector.utils import batch_space
 from scipy import interpolate
 
+class LinearInterpolation(object):
+    def __init__(self, ts, ys):
+        """
+        ts: increasing collections of times, such as [t0, t1, t2, ...]
+        ys: values at ts, NDarray or 1-D array
+        """
+        
+        self.interp = interpolate.interp1d(ts, ys, axis=0, kind="linear", fill_value="extrapolate")
+
+    def evaluate(self, t):
+        """
+        evaluate at time t, t should be in ts
+        """
+        return self.interp(t)
 
 class DiscreteLinearStateSpaceEnv(gym.Env):
     """
-    ## Description
-
-    ## Action Space
-
-    ## Observation Space
-
-    ## Rewards
-    The state space outputs are modeled as reward.
-
-    ## Starting State
-    All observations are assigned a uniformly random value in `(-0.05, 0.05)`
-    ## Episode End
-
-    ## Arguments
-    ```python
-    import gymnasium as gym
-    gym.make('CartPole-v1')
-    ```
-    On reset, the `options` parameter allows the user to change the bounds used to determine
-    the new random state.
+    should we implement following gym? 
     """
 
     metadata = {
@@ -41,18 +36,18 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
     }
 
     def __init__(self, 
-        A, 
-        Bu, 
-        Bd, 
-        C, 
-        D, 
-        x0,
-        x_high, 
-        x_low, 
+        A: np.array, 
+        Bu: np.array, 
+        Bd:np.array, 
+        C:np.array, 
+        D:np.array, 
+        x0:np.array,
+        dist_fcn: LinearInterpolation,
+        x_high:np.array, 
+        x_low:np.array, 
         n_actions: Union[int, List[int]],
         u_high, 
         u_low,
-        reward_fcn: Callable[[], float] = None, 
         ts: Optional[int] = 0, 
         te: Optional[int] = 1,
         dt: Optional[int] = 0.1,
@@ -68,9 +63,16 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         self.integrator = "euler"
         self.u_high = np.array(u_high)
         self.u_low = np.array(u_low)
-
-        # reward function
-        self.reward_fcn = reward_fcn        
+        # asset that the shapes are correct
+        assert self.A.shape[0] == self.A.shape[1]
+        assert self.Bu.shape[0] == self.A.shape[0]
+        assert self.Bd.shape[0] == self.A.shape[0]
+        assert self.C.shape[1] == self.A.shape[0]
+        assert self.D.shape[0] == self.C.shape[0]
+        assert self.x0.shape[0] == self.A.shape[0]
+        assert self.u_high.shape[0] == self.Bu.shape[1]
+        assert self.u_low.shape[0] == self.Bu.shape[1]
+        assert self.u_high.shape[0] == self.u_low.shape[0]
 
         # simulation 
         self.ts = ts
@@ -79,23 +81,23 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         self.t = self.ts # initial model clock
 
         # x high limit 
-        high = np.array(x_high,
+        self.high = np.array(x_high,
             dtype=np.float32,
         ) if type(x_high) is not np.ndarray else x_high.astype(np.float32)
         # x low limit
-        low = np.array(x_low,
+        self.low = np.array(x_low,
             dtype=np.float32,
         ) if type(x_low) is not np.ndarray else x_low.astype(np.float32)
 
         # disturbance
-        self.disturbance = None 
-
+        self.dist_fcn = dist_fcn 
+        
         # discrete action space
         # np.array(scalar).shape = ()
         if type(n_actions) is int:
             n_actions = [n_actions]
         
-        n_actions = np.array(n_actions)
+        self.n_actions = np.array(n_actions)
         
         if len(n_actions) == 1:
             self.action_space = spaces.Discrete(n_actions[0])
@@ -103,10 +105,11 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         elif len(n_actions) > 1:
             self.action_space = spaces.MultiDiscrete(n_actions)
         
-        self.observation_space = spaces.Box(low, high, dtype=np.float32)
+        self.observation_space = self._get_observation_space()
 
         # reward
         self.reward = 0
+        self.done = False
 
         # skpi render mode
         self.render_mode = render_mode
@@ -123,7 +126,10 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         # assertions: dimensions should match
 
     def _linear_state_space(self, state, action, disturbance):
-        state = np.array(state)
+        state = np.array(state).reshape(-1,1)
+        action = np.array(action).reshape(-1,1)
+        disturbance = np.array(disturbance).reshape(-1,1)
+
         xdot = self.A @ state + self.Bu @ action + self.Bd @ disturbance
         y = self.C @ state + self.D @ action
 
@@ -142,12 +148,28 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         return self._linear_state_space(state, action, disturbance)
         
     def _action_to_control(self, action):
-        if isinstance(self.action_space, gymnasium.spaces.discrete.Discrete):
+        if isinstance(self.action_space, gym.spaces.discrete.Discrete):
             control_inputs = action/(self.n_actions-1)*(self.u_high - self.u_low) + self.u_low
         else:
             logger.error(f"Action space {type(self.action_space)} is not implemented for current gym environment.")
 
         return control_inputs
+    
+    def _get_observation_space(self):
+        """
+        can be overwritten by high-level wrapper
+        """
+        return spaces.Box(self.low, self.high, dtype=np.float32)
+        
+    def _reward_fcn(self):
+        
+        return -10 if self.done else 1 
+
+    def _is_done(self):
+        
+        self.done = bool(
+            self.t >= self.te
+        )
 
     def step(self, action):
         assert self.action_space.contains(
@@ -156,19 +178,30 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         assert self.state is not None, "Call reset before using step method."
         state = self.state
 
+        # disturbance
+        self._disturbance = self._get_disturbance()
+        
         # advance one step
-        self.state, reward = self.model(state, action, self.disturbance)
+        self.state, y = self.model(state, action, self._disturbance)
+        
         # update model clock
         self.t += self.dt
         
         # terminal conditions: simulation over time, state over bounds
-        terminated = bool(
-            self.t >= self.te
-        )
+        self._is_done()
 
+        # reward 
+        reward = self._reward_fcn()
+        
         # render: NOT IMPLEMENTED
 
-        return np.array(self.state, dtype=np.float32), reward, terminated, False, {}
+        return np.array(self.state, dtype=np.float32), reward, self.done, False, {}
+
+    def _get_disturbance(self):
+        """
+        system disturbance at time t: use interpolate
+        """
+        return self.dist_fcn.evaluate(self.t)
 
     def reset(
         self,
@@ -177,14 +210,8 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         options: Optional[dict] = None,
     ):
         super().reset(seed=seed)
-        # Note that if you use custom reset bounds, it may lead to out-of-bound
-        # state/observations.
-        low, high = utils.maybe_parse_reset_bounds(
-            options, -0.05, 0.05  # default low
-        )  # default high
-        # initial state + random noise  
         self.t = self.ts
-        self.state = self.x0 + self.np_random.uniform(low=low, high=high, size=np.array(self.x0).shape)
+        self.state = self.x0 + self.np_random.uniform(low=-0.5, high=0.5, size=np.array(self.x0).shape)
 
         return np.array(self.state, dtype=np.float32), {}
 
@@ -194,20 +221,6 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
     def close(self):
         pass 
 
-class LinearInterpolation(object):
-    def __init__(self, ts, ys):
-        """
-        ts: increasing collections of times, such as [t0, t1, t2, ...]
-        ys: values at ts, NDarray or 1-D array
-        """
-        
-        self.interp = interpolate.interp1d(ts, ys, axis=0, kind="linear", fill_value="extrapolate")
-
-    def evaluate(self, t):
-        """
-        evaluate at time t, t should be in ts
-        """
-        return self.interp(t)
 
 class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
     """
@@ -239,6 +252,8 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         ts: Optional[int] = 0, 
         te: Optional[int] = 1,
         dt: Optional[int] = 0.1,
+        n_next_steps: Optional[int] = 4,
+        n_prev_steps: Optional[int] = 4,
         render_mode: Optional[str] = None):
         
         self.rc_params = rc_params
@@ -248,11 +263,11 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
 
         # get piece wise continuous disturbance model
         # t, d = disturbances
-        self.dist = LinearInterpolation(*disturbances)
+        dist_fcn = LinearInterpolation(*disturbances)
         
         # reward parameters
         self.cop = cop 
-        self.energy_price = energy_price if not energy_price else np.ones(24) 
+        self.energy_price = energy_price if energy_price else np.ones(24) 
 
         Tz_high_default = [30.0 for i in range(24)]
         Tz_low_default = [12.0 for i in range(24)]
@@ -263,6 +278,16 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
 
         self.weights = weights if weights else [1.0, 1.0, 1.0]
 
+        # observation space for DRL algorithms
+        self.n_next_steps = n_next_steps 
+        self.n_prev_steps = n_prev_steps
+
+        # conditional
+        self.history = {}
+        if self.n_prev_steps > 0:
+            self.history['Tz'] = [273.15+25]*self.n_prev_steps
+            self.history['P'] = [0.]*self.n_prev_steps
+
         # initialize
         super(R4C3DiscreteEnv, self).__init__(
             A = self.A,
@@ -271,6 +296,7 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
             C = self.C,
             D = self.D,
             x0 = x0,
+            dist_fcn = dist_fcn,
             x_high = x_high, 
             x_low = x_low, 
             n_actions = n_actions, 
@@ -287,7 +313,7 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         Cai, Cwe, Cwi, Re, Ri, Rw, Rg = self.rc_params
         # initialzie
         A = np.zeros((3, 3))
-        Bu = np.zeros((1, 1))
+        Bu = np.zeros((3, 1))
         Bd = np.zeros((3, 4))
         C = np.zeros((2, 3))
         D = np.zeros((2, 1))
@@ -315,11 +341,7 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
 
         return A, Bu, Bd, C, D
         
-    def _get_disturbance(self):
-        """
-        system disturbance at time t: use interpolate
-        """
-        return self.dist(self.t)
+
 
     def get_objective_terms(self, Tz, q_hvac, action):
         """
@@ -334,37 +356,112 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         dTz = max(Tz - self.Tz_high[h], self.Tz_low[h] - Tz, 0)
         
         # control slew
-        du = abs((action - self.action_prev)/(self.n_actions-1))
+        du = float(abs((action - self.action_prev)/(self.n_actions-1)))
 
         return [cost, dTz, du]
 
-    def reward_fcn(self, objective):
+    def _reward_fcn(self, objective):
         # maximize reward: negate objective
         # we can overwrite this reward function using gym.wrapper
 
         energy_cost, max_T_violations, du = objective 
         w1, w2, w3 = self.weights 
 
-        return -(w1*energy_cost + w2*max_T_violations + w3*du)
+        return float(-(w1*energy_cost + w2*max_T_violations + w3*du))
 
-    def step(self, action):
-        # get disturbance
-        self.disturbance = self._get_disturbance()
+    def _get_observation_space1(self):
+        # [t, Tz, To, solar, power, price, To for next n steps, solar for next n steps, price for next n steps, Tz from previous m steps, power from previous m steps]
+        high = np.array([86400.,35., 40., 4., 4., 1.0]+\
+                [40.]*self.n_next_steps+[4.]*self.n_next_steps+[4.]*self.n_next_steps+\
+                [35]*self.n_prev_steps+[4.]*self.n_prev_steps)
         
-        # LSSM step
-        state_next, y, terminated, _, _ = super(R4C3DiscreteEnv, self).step(action)
+        low = np.array([0., 12., 0., 0., 0., 0.]+\
+                [0.]*self.n_next_steps+[0.]*self.n_next_steps+[0.]*self.n_next_steps+\
+                [12.]*self.n_prev_steps+[0.]*self.n_prev_steps) 
 
+        return spaces.Box(low, high, dtype=np.float32)
+
+    def _get_observation_space(self):
+        high = np.hstack([np.array(self.high), abs(self.u_low)/self.cop])
+        low = np.hstack([np.array(self.low), self.u_high/self.cop])
+        return spaces.Box(low, high, dtype=np.float32)
+
+    # TODO: improve the object design, typically users should not overwrite step() method, but providing customized observation, reward and termination
+    def step(self, action):
+        assert self.action_space.contains(
+            action
+        ), f"{action!r} ({type(action)}) invalid"
+        assert self.state is not None, "Call reset before using step method."
+        state = self.state
+        
+        # get disturbance at time t
+        self._disturbance = self._get_disturbance()
+
+        # LSSM step
+        state_next, y = self.model(state, action, self._disturbance)
+        self.state = state_next
+        self.t += self.dt
+
+        # check termination
+        # --------------------------------
+        self._is_done()
+
+        # get observation
+        # --------------------------------
         # unpack output
         Tz, q_hvac = y 
 
+        # construct DRL observations
+        obs_next = self._get_observation(state_next, y)
+
         # get rewards
+        # -----------------------------------
         objective = self.get_objective_terms(Tz, q_hvac, action)
-        reward = self.reward_fcn(objective)
+        reward = self._reward_fcn(objective)
 
         # update history if needed
+        # -----------------------------------
         self.action_prev = action 
 
-        return state_next, reward, terminated, False, {}
+        return obs_next, reward, self.done, False, {}
+
+    def _get_observation(self, state, y):
+        # unpack 
+        Tz, Twe, Twi = state
+        Tz, q_hvac = y
+
+        obs = np.hstack([Tz, Twe, Twi, abs(q_hvac)/self.cop], dtype=np.float32) 
+        return obs
+
+    def _get_observation1(self):
+        # unpack
+        Tz, To, q_hvac = self.state
+        t = self.t
+        h = int(int(t)%86400/3600)
+        # initialize
+        obs = np.zeros(6+self.n_next_steps*3+self.n_prev_steps*2)
+
+        # set observation
+        obs[0] = t
+        obs[1] = Tz
+        obs[2] = To
+        obs[3] = self.solar[h]
+        obs[4] = self.power[h]
+        obs[5] = self.energy_price[h]
+
+        # set next steps
+        for i in range(self.n_next_steps):
+            obs[6+i] = To
+            obs[6+self.n_next_steps+i] = self.solar[(h+i+1)%24]
+            obs[6+self.n_next_steps*2+i] = self.energy_price[(h+i+1)%24]
+
+        # set previous steps
+        if self.n_prev_steps > 0:
+            for i in range(self.n_prev_steps):
+                obs[6+self.n_next_steps*3+i] = self.history['Tz'][i]
+                obs[6+self.n_next_steps*3+self.n_prev_steps+i] = self.history['P'][i]
+
+        return obs
 
     def reset(self, 
         *,
@@ -374,5 +471,6 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         # reset previous action for starting 
         self.action_prev = 0
 
-        return super(R4C3DiscreteEnv, self).reset(seed, options)
+        state_init, _ = super().reset(seed=seed)
 
+        return np.hstack([state_init, 0.], dtype=np.float32), {}
