@@ -391,10 +391,10 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         state = self.state
         
         # get disturbance at time t
-        self._disturbance = self._get_disturbance()
+        disturbance = self._get_disturbance()
 
         # LSSM step
-        state_next, y = self.model(state, action, self._disturbance)
+        state_next, y = self.model(state, action, disturbance)
         self.state = state_next
         self.t += self.dt
 
@@ -408,7 +408,8 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         Tz, q_hvac = y 
 
         # construct DRL observations
-        obs_next = self._get_observation(state_next, y)
+        obs_next = self._get_observation(state_next, y, disturbance)
+        self.observation = obs_next
 
         # get rewards
         # -----------------------------------
@@ -419,7 +420,7 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         # -----------------------------------
         self._update_history(action, Tz, abs(q_hvac)/self.cop)
 
-        return obs_next, reward, self.done, False, {}
+        return np.array(obs_next, dtype=np.float32), reward, self.done, False, {}
     
     def _update_history(self, action, Tz, power):
         # update action history
@@ -435,21 +436,13 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         power_history[-1] = power
         self.history['P'] = power_history
 
-    def _get_observation1(self, state, y):
-        # unpack 
-        Tz, Twe, Twi = state
-        Tz, q_hvac = y
-
-        obs = np.hstack([Tz, Twe, Twi, abs(q_hvac)/self.cop], dtype=np.float32) 
-        return obs
-
-    def _get_observation(self, state_next, y):
+    def _get_observation(self, state_next, y, disturbance):
         # unpack
         Tz, Twe, Twi  = state_next
         Tz, q_hvac = y
         # disturbance: assume q_win is from solar
         # TODO: it's better to use a weather file to generate solar radiation
-        To, q_int, q_win, q_rad = self._disturbance
+        To, q_int, q_win, q_rad = disturbance
         dists_next_n_steps = self._get_disturbance_next_n_steps()
         solar_next_n_steps = dists_next_n_steps[:, 2]
         To_next_n_steps = dists_next_n_steps[:, 0]
@@ -462,7 +455,7 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         obs = np.zeros(6+self.n_next_steps*3+self.n_prev_steps*2)
 
         # set observation
-        obs[0] = t
+        obs[0] = h
         obs[1] = Tz
         obs[2] = To
         obs[3] = q_win
@@ -511,4 +504,14 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
 
         state_init, _ = super().reset(seed=seed)
 
-        return np.hstack([state_init, 0.], dtype=np.float32), {}
+        t = self.t
+        h = int(int(t)%86400/3600)
+
+        Tz, _, _ = state_init 
+
+        #return np.hstack([state_init, 0.], dtype=np.float32), {}
+        disturbance = self._get_disturbance()
+        self.observation = self._get_observation(state_init, (state_init[0], 0), disturbance)
+        
+        print("env is reset!")
+        return np.array(self.observation, dtype=np.float32), {}
