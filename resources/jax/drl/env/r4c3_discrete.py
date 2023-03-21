@@ -267,8 +267,12 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         
         # reward parameters
         self.cop = cop 
-        self.energy_price = energy_price if energy_price else np.ones(24) 
-
+        self.energy_price = np.array([0.02987, 0.02987, 0.02987, 0.02987,
+               0.02987, 0.02987, 0.04667, 0.04667,
+               0.04667, 0.04667, 0.04667, 0.04667,
+               0.15877, 0.15877, 0.15877, 0.15877,
+               0.15877, 0.15877, 0.15877, 0.04667,
+               0.04667, 0.04667, 0.02987, 0.02987])
         Tz_high_default = [30.0 for i in range(24)]
         Tz_low_default = [12.0 for i in range(24)]
         Tz_high_default[8:18] = [26.0]*(18-8)
