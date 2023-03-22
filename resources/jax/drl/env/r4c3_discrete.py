@@ -354,7 +354,7 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         """
         # energy cost
         h = int(int(self.t)%86400/3600)
-        cost = abs(q_hvac)/self.cop*self.energy_price[h]/self.dt/3600
+        cost = abs(q_hvac)/self.cop*self.energy_price[h]*(self.dt/3600.)
 
         # reference violation
         dTz = max(Tz - self.Tz_high[h], self.Tz_low[h] - Tz, 0)
