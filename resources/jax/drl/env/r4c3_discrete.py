@@ -374,12 +374,12 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         return float(-(w1*energy_cost + w2*max_T_violations + w3*du))
 
     def _get_observation_space(self):
-        # [t, Tz, To, solar, power, price, To for next n steps, solar for next n steps, price for next n steps, Tz from previous m steps, power from previous m steps]
-        high = np.array([86400.,35., 40., 4., 4., 1.0]+\
+        # [t, Tz, Twe, Twi, To, solar, power, price, To for next n steps, solar for next n steps, price for next n steps, Tz from previous m steps, power from previous m steps]
+        high = np.array([86400.,40., 80., 35., 40., 4., 4., 1.0]+\
                 [40.]*self.n_next_steps+[4.]*self.n_next_steps+[4.]*self.n_next_steps+\
                 [35]*self.n_prev_steps+[4.]*self.n_prev_steps)
         
-        low = np.array([0., 12., 0., 0., 0., 0.]+\
+        low = np.array([0., 12., 12., 12., 0., 0., 0., 0.]+\
                 [0.]*self.n_next_steps+[0.]*self.n_next_steps+[0.]*self.n_next_steps+\
                 [12.]*self.n_prev_steps+[0.]*self.n_prev_steps) 
 
@@ -456,15 +456,17 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         h = int(int(t)%86400/3600)
 
         # initialize
-        obs = np.zeros(6+self.n_next_steps*3+self.n_prev_steps*2)
+        obs = np.zeros(8+self.n_next_steps*3+self.n_prev_steps*2)
 
         # set observation
         obs[0] = h
         obs[1] = Tz
-        obs[2] = To
-        obs[3] = q_win
-        obs[4] = abs(q_hvac)/self.cop
-        obs[5] = self.energy_price[h]
+        obs[2] = Twe 
+        obs[3] = Twi
+        obs[4] = To
+        obs[5] = q_win
+        obs[6] = abs(q_hvac)/self.cop
+        obs[7] = self.energy_price[h]
 
         # set next steps
         if self.n_next_steps > 0:
