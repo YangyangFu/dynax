@@ -21,12 +21,6 @@ import json
 from typing import Callable, List, Tuple, Union
 
 # %%
-# need a virtual display for rendering in docker
-from pyvirtualdisplay import Display
-display = Display(visible=0, size=(1400, 900))
-display.start()
-from IPython import display as ipythondisplay
-# %%
 """
 class SimpleDense(nn.Module):
   features: int
@@ -377,7 +371,7 @@ env_model_params = exact_model_params
 n_episodes = 250
 reward_history = []
 max_episode_steps=200 # env.spec.max_episode_steps
-reward_threshold= -10 # env.spec.reward_threshold
+reward_threshold= -70 # env.spec.reward_threshold
 solved_window = 20
  
 # sync target q-network
@@ -468,12 +462,6 @@ plot_moving_average_reward(reward_history)
 
 
 # %%
-# need a virtual display for rendering in docker
-from pyvirtualdisplay import Display
-display = Display(visible=0, size=(1400, 900))
-display.start()
-from IPython import display as ipythondisplay
-
 # Test the trained agent
 
 print("\nTesting the trained agent...")

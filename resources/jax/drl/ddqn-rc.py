@@ -29,12 +29,6 @@ import pandas as pd
 import json
 
 # %%
-# need a virtual display for rendering in docker
-from pyvirtualdisplay import Display
-display = Display(visible=0, size=(1400, 900))
-display.start()
-from IPython import display as ipythondisplay
-# %%
 class QNetwork(nn.Module):
     action_size: int
     
