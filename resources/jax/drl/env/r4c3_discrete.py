@@ -471,15 +471,15 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         # set next steps
         if self.n_next_steps > 0:
             for i in range(self.n_next_steps):
-                obs[6+i] = To_next_n_steps[i]
-                obs[6+self.n_next_steps+i] = solar_next_n_steps[i]
-                obs[6+self.n_next_steps*2+i] = self.energy_price[(h+i+1)%24]
+                obs[8+i] = To_next_n_steps[i]
+                obs[8+self.n_next_steps+i] = solar_next_n_steps[i]
+                obs[8+self.n_next_steps*2+i] = self.energy_price[(h+i+1)%24]
 
         # set previous steps
         if self.n_prev_steps > 0:
             for i in range(self.n_prev_steps):
-                obs[6+self.n_next_steps*3+i] = self.history['Tz'][i]
-                obs[6+self.n_next_steps*3+self.n_prev_steps+i] = self.history['P'][i]
+                obs[8+self.n_next_steps*3+i] = self.history['Tz'][i]
+                obs[8+self.n_next_steps*3+self.n_prev_steps+i] = self.history['P'][i]
 
         return obs
 

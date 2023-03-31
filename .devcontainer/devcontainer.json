@@ -4,6 +4,7 @@
 	"name": "jax-cpu",
 	"image": "yangyangfu/diffbuildings-jax-cpu:latest",
 	"runArgs": [
+		"--shm-size=30.0gb",
 		"--rm",
 		"-it"
 	],
