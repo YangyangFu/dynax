@@ -172,8 +172,8 @@ disturbance = data[disturbance_names].values
 
 # %%
 # random seed
-seed = 0
-np.random.seed(seed)
+seed = 1
+random.seed(seed)
 
 # Train the agent
 import env
@@ -200,16 +200,16 @@ env = gym.make("R4C3Discrete-v0",
 
 state_size = env.observation_space.shape[0]
 action_size = env.action_space.n
-rng_key = jax.random.PRNGKey(42) 
+rng_key = jax.random.PRNGKey(seed) 
 lr = 1e-05
-epsilon_decay = 0.98
+epsilon_decay = 0.95
 
 agent = DDQNAgent(state_size, action_size, rng_key, lr=lr, epsilon_decay=epsilon_decay)
 
-n_episodes = 500
+n_episodes = 250
 reward_history = []
-max_episode_steps=200 # env.spec.max_episode_steps
-reward_threshold= -10 # env.spec.reward_threshold
+max_episode_steps=250 # env.spec.max_episode_steps
+reward_threshold= -60 # env.spec.reward_threshold
 solved_window = 20
  
 # sync target q-network
@@ -218,7 +218,7 @@ target_update_freq = 5
 
 # main loop
 for episode in range(n_episodes):
-    state, _ = env.reset(seed=0)
+    state, _ = env.reset(seed=seed)
     state = jnp.array(state, dtype=jnp.float32)
 
     total_reward = 0
@@ -298,12 +298,6 @@ plot_moving_average_reward(reward_history)
 
 
 # %%
-# need a virtual display for rendering in docker
-from pyvirtualdisplay import Display
-display = Display(visible=0, size=(1400, 900))
-display.start()
-from IPython import display as ipythondisplay
-
 # Test the trained agent
 
 print("\nTesting the trained agent...")

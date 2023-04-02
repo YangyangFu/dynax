@@ -207,8 +207,9 @@ class DDQNAgent:
         loss_value, gradients = grad_fn(self.params, states, actions, rewards, next_states, dones)
         updates, self.opt_state = self.optimizer.update(gradients, self.opt_state)
         self.params = optax.apply_updates(self.params, updates)
-        self.losses.append(loss_value)
-        self.grads.append(gradients)
+        # this will use a lot of memeory
+        #self.losses.append(loss_value)
+        #self.grads.append(gradients)
         #self.epsilon = max(self.epsilon_end, self.epsilon * self.epsilon_decay)
         #print(self.epsilon)
         #self.steps += 1
@@ -328,8 +329,8 @@ disturbance = data[disturbance_names].values
 
 # %%
 # random seed
-seed = 0
-np.random.seed(seed)
+seed = 2
+random.seed(seed)
 
 # Train the agent
 import env
@@ -356,9 +357,9 @@ env = gym.make("R4C3Discrete-v0",
 
 state_size = env.observation_space.shape[0]
 action_size = env.action_space.n
-rng_key = jax.random.PRNGKey(42) 
+rng_key = jax.random.PRNGKey(seed) 
 lr = 1e-05
-epsilon_decay = 0.98
+epsilon_decay = 0.95
 planning_steps = 5
 
 agent = DDQNAgent(state_size, action_size, rng_key, lr=lr, epsilon_decay=epsilon_decay)
@@ -371,7 +372,7 @@ env_model_params = exact_model_params
 n_episodes = 250
 reward_history = []
 max_episode_steps=200 # env.spec.max_episode_steps
-reward_threshold= -70 # env.spec.reward_threshold
+reward_threshold= -60 # env.spec.reward_threshold
 solved_window = 20
  
 # sync target q-network
@@ -380,7 +381,7 @@ target_update_freq = 5
 
 # main loop
 for episode in range(n_episodes):
-    state, _ = env.reset(seed=0)
+    state, _ = env.reset(seed=seed)
     state = jnp.array(state, dtype=jnp.float32)
 
     total_reward = 0
@@ -437,14 +438,6 @@ plt.xlabel("Episode")
 plt.ylabel("Total Reward")
 plt.title("Historical Rewards for RC-v1")
 plt.savefig('ddqn-rc-dyna-lssm-reward.png')
-
-
-# %%
-plt.figure()
-plt.subplot(2,1,1)
-plt.plot(agent.losses)
-plt.grid()
-plt.savefig('ddqn-rc-dyna-lssm-losses.png')
 
 # %%
 # plot training 
@@ -538,4 +531,4 @@ plt.savefig('ddqn-rc-dyna-lssm.png')
 
 # save actions for future use
 with open('./ddqn-rc-dyna-lssm-actions.json', 'w') as f:
-    json.dump(actions, f)
+    json.dump([float(action) for action in actions], f)
