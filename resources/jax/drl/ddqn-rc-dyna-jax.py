@@ -44,35 +44,35 @@ def parse_args():
     # Algorithm specific arguments
     parser.add_argument("--env-id", type=str, default="RC-v1",
         help="the id of the environment")
-    parser.add_argument("--total-timesteps", type=int, default=200000,
+    parser.add_argument("--total-timesteps", type=int, default=96*500,
         help="total timesteps of the experiments")
-    parser.add_argument("--learning-rate", type=float, default=2.5e-4,
+    parser.add_argument("--learning-rate", type=float, default=1e-4,
         help="the learning rate of the optimizer")
     parser.add_argument("--buffer-size", type=int, default=20000,
         help="the replay memory buffer size")
     parser.add_argument("--gamma", type=float, default=0.99,
         help="the discount factor gamma")
-    parser.add_argument("--tau", type=float, default=1.,
+    parser.add_argument("--tau", type=float, default=0.001,
         help="the target network update rate")
-    parser.add_argument("--target-network-frequency", type=int, default=500,
+    parser.add_argument("--target-network-frequency", type=int, default=1,
         help="the timesteps it takes to update the target network")
     parser.add_argument("--batch-size", type=int, default=128,
         help="the batch size of sample from the reply memory")
     parser.add_argument("--start-e", type=float, default=1,
         help="the starting epsilon for exploration")
-    parser.add_argument("--end-e", type=float, default=0.05,
+    parser.add_argument("--end-e", type=float, default=0.01,
         help="the ending epsilon for exploration")
     parser.add_argument("--exploration-fraction", type=float, default=0.5,
         help="the fraction of `total-timesteps` it takes from start-e to go end-e")
-    parser.add_argument("--learning-starts", type=int, default=10000,
+    parser.add_argument("--learning-starts", type=int, default=0,
         help="timestep to start learning")
-    parser.add_argument("--train-frequency", type=int, default=10,
+    parser.add_argument("--train-frequency", type=int, default=1,
         help="the frequency of training")
 
     # Dyna-Q specific arguments
-    parser.add_argument("--planning-steps", type=int, default=10,
-        help="the number of planning steps")
-    parser.add_argument("--planning-frequency", type=int, default=10,
+    parser.add_argument("--planning-steps", type=int, default=50,
+        help="the number of planning steps") 
+    parser.add_argument("--planning-frequency", type=int, default=1,
         help="the frequency of planning")
 
     args = parser.parse_args()
@@ -134,7 +134,7 @@ env_rc = gym.make("R4C3Discrete-v0",
             dt = dt,
             weights = weights)
 
-#%%
+#%%**************************************
 def make_env(env_rc, seed, idx, capture_video, run_name):
     def thunk():
         # this wrapper keeps recording cumulative reward and episode length
@@ -158,9 +158,11 @@ class QNetwork(nn.Module):
 
     @nn.compact
     def __call__(self, x: jnp.ndarray):
-        x = nn.Dense(120)(x)
+        x = nn.Dense(256)(x)
         x = nn.relu(x)
-        x = nn.Dense(84)(x)
+        x = nn.Dense(256)(x)
+        x = nn.relu(x)
+        x = nn.Dense(256)(x)
         x = nn.relu(x)
         x = nn.Dense(self.action_dim)(x)
         return x
