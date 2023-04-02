@@ -24,7 +24,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"),
         help="the name of this experiment")
-    parser.add_argument("--seed", type=int, default=1,
+    parser.add_argument("--seed", type=int, default=2,
         help="seed of the experiment")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="if toggled, this experiment will be tracked with Weights and Biases")
@@ -42,27 +42,27 @@ def parse_args():
         help="the user or org name of the model repository from the Hugging Face Hub")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="CartPole-v1",
+    parser.add_argument("--env-id", type=str, default="RC-v1",
         help="the id of the environment")
-    parser.add_argument("--total-timesteps", type=int, default=96*1000,
+    parser.add_argument("--total-timesteps", type=int, default=96*500,
         help="total timesteps of the experiments")
-    parser.add_argument("--learning-rate", type=float, default=1e-05,
+    parser.add_argument("--learning-rate", type=float, default=1e-04,
         help="the learning rate of the optimizer")
     parser.add_argument("--buffer-size", type=int, default=20000,
         help="the replay memory buffer size")
     parser.add_argument("--gamma", type=float, default=0.99,
         help="the discount factor gamma")
-    parser.add_argument("--tau", type=float, default=1.,
+    parser.add_argument("--tau", type=float, default=0.001,
         help="the target network update rate")
-    parser.add_argument("--target-network-frequency", type=int, default=5,
+    parser.add_argument("--target-network-frequency", type=int, default=1,
         help="the timesteps it takes to update the target network")
-    parser.add_argument("--batch-size", type=int, default=128,
+    parser.add_argument("--batch-size", type=int, default=64,
         help="the batch size of sample from the reply memory")
     parser.add_argument("--start-e", type=float, default=1,
         help="the starting epsilon for exploration")
     parser.add_argument("--end-e", type=float, default=0.01,
         help="the ending epsilon for exploration")
-    parser.add_argument("--exploration-fraction", type=float, default=0.8,
+    parser.add_argument("--exploration-fraction", type=float, default=0.5,
         help="the fraction of `total-timesteps` it takes from start-e to go end-e")
     parser.add_argument("--learning-starts", type=int, default=0,
         help="timestep to start learning")

@@ -42,7 +42,7 @@ def parse_args():
         help="the user or org name of the model repository from the Hugging Face Hub")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="CartPole-v1",
+    parser.add_argument("--env-id", type=str, default="RC-v1",
         help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=200000,
         help="total timesteps of the experiments")
