@@ -46,7 +46,7 @@ def parse_args():
         help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=96*500,
         help="total timesteps of the experiments")
-    parser.add_argument("--learning-rate", type=float, default=1e-4,
+    parser.add_argument("--learning-rate", type=float, default=1e-06,
         help="the learning rate of the optimizer")
     parser.add_argument("--buffer-size", type=int, default=20000,
         help="the replay memory buffer size")
@@ -70,7 +70,7 @@ def parse_args():
         help="the frequency of training")
 
     # Dyna-Q specific arguments
-    parser.add_argument("--planning-steps", type=int, default=50,
+    parser.add_argument("--planning-steps", type=int, default=15,
         help="the number of planning steps") 
     parser.add_argument("--planning-frequency", type=int, default=1,
         help="the frequency of planning")
@@ -429,7 +429,8 @@ if __name__ == "__main__":
                         data = rb.sample(args.batch_size)
 
                         # sample actions from action space
-                        actions = np.array([[envs.single_action_space.sample() for _ in range(envs.num_envs)] for _ in range(args.batch_size)])
+                        #actions = np.array([[envs.single_action_space.sample() for _ in range(envs.num_envs)] for _ in range(args.batch_size)])
+                        actions = rb.sample(args.batch_size).actions.numpy()
                         controls = np.array([action/(envs.single_action_space.n-1)*(envs.envs[0].u_high - envs.envs[0].u_low) + envs.envs[0].u_low for action in actions])
 
                         # observation predictions

@@ -11,7 +11,9 @@ import numpy as np
 from jax import jit, lax
 from jax import grad
 from diffrax import diffeqsolve, ODETerm, Euler, Dopri5, SaveAt, PIDController
-import optax 
+import optax
+import matplotlib 
+matplotlib.use("Agg") 
 import matplotlib.pyplot as plt
 import time 
 import json
@@ -287,8 +289,10 @@ print(y.shape)
 plt.figure(figsize=(12,6))
 plt.plot(y, 'b-', label='Target')
 plt.plot(y_pred, 'r-', label="Prediction")
+plt.vlines(x=n_train, ymin=min(y), ymax=max(y), color='k', linestyles='--', lw=3, label='Train/Test Split')
 plt.ylabel('Temperature (C)')
 plt.legend()
+plt.grid()
 plt.savefig('parameter_inference.png')
 
 # save the parameters

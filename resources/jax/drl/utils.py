@@ -35,10 +35,12 @@ def to_csv(dpath):
     tags, values = zip(*d.items())
     np_values = np.array(values)
 
+    output_tags = ["episodic_return","td_loss"]
     for index, tag in enumerate(tags):
-        if "episodic_return" in tag:
-            df = pd.DataFrame(np_values[index], columns=dirs)
-            df.to_csv(get_file_path(dpath, tag))
+        for out in output_tags:
+            if out in tag:
+                df = pd.DataFrame(np_values[index], columns=dirs)
+                df.to_csv(get_file_path(dpath, tag))
 
 
 def get_file_path(dpath, tag):
@@ -50,5 +52,5 @@ def get_file_path(dpath, tag):
 
 
 if __name__ == '__main__':
-    path = "./runs/RC-v1__ddqn-rc-jax__2__1680472215"
+    path = "./runs/RC-v1__ddqn-rc-dyna-jax__1__1680489891"
     to_csv(path)
