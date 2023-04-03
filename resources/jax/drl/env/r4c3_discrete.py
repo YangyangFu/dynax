@@ -1,3 +1,9 @@
+#
+# TODO:
+#   - Reimplement using TimeLimit wrapper to consider time limit
+#   - Use info to store additional info such as history/objective terms, etc.
+#   - Need a buffer to store info and support sampling - stabebaseline buffer do not support sampling info from buffer
+
 import math
 from typing import Optional, Tuple, Union, Callable, List
 
@@ -193,9 +199,12 @@ class DiscreteLinearStateSpaceEnv(gym.Env):
         # reward 
         reward = self._reward_fcn()
         
+        # save some intermediate info
+        info = {}
+        info["t"] = self.t 
         # render: NOT IMPLEMENTED
 
-        return np.array(self.state, dtype=np.float32), reward, self.done, False, {}
+        return np.array(self.state, dtype=np.float32), reward, self.done, False, info
 
     def _get_disturbance(self):
         """
@@ -374,12 +383,12 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         return float(-(w1*energy_cost + w2*max_T_violations + w3*du))
 
     def _get_observation_space(self):
-        # [t, Tz, Twe, Twi, To, solar, power, price, To for next n steps, solar for next n steps, price for next n steps, Tz from previous m steps, power from previous m steps]
-        high = np.array([86400.,40., 80., 35., 40., 4., 4., 1.0]+\
-                [40.]*self.n_next_steps+[4.]*self.n_next_steps+[4.]*self.n_next_steps+\
-                [35]*self.n_prev_steps+[4.]*self.n_prev_steps)
+        # [t, Tz, Twe, Twi, To, q_int, q_win, q_rad, power, price, To for next n steps, solar(q_win) for next n steps, price for next n steps, Tz from previous m steps, power from previous m steps]
+        high = np.array([86400.,40., 80., 35., 40., 5., 5., 5., 12., 1.0]+\
+                [40.]*self.n_next_steps+[5.]*self.n_next_steps+[1.]*self.n_next_steps+\
+                [40]*self.n_prev_steps+[12.]*self.n_prev_steps)
         
-        low = np.array([0., 12., 12., 12., 0., 0., 0., 0.]+\
+        low = np.array([0., 12., 12., 12., 0., 0., 0., 0., 0., 0.]+\
                 [0.]*self.n_next_steps+[0.]*self.n_next_steps+[0.]*self.n_next_steps+\
                 [12.]*self.n_prev_steps+[0.]*self.n_prev_steps) 
 
@@ -424,7 +433,11 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         # -----------------------------------
         self._update_history(action, Tz, abs(q_hvac)/self.cop)
 
-        return np.array(obs_next, dtype=np.float32), reward, self.done, False, {}
+        # save info -> history can also be saved in info
+        info = {}
+        info["t"] = self.t 
+
+        return np.array(obs_next, dtype=np.float32), reward, self.done, False, info
     
     def _update_history(self, action, Tz, power):
         # update action history
@@ -456,7 +469,7 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         h = int(int(t)%86400/3600)
 
         # initialize
-        obs = np.zeros(8+self.n_next_steps*3+self.n_prev_steps*2)
+        obs = np.zeros(10+self.n_next_steps*3+self.n_prev_steps*2)
 
         # set observation
         obs[0] = h
@@ -464,22 +477,24 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
         obs[2] = Twe 
         obs[3] = Twi
         obs[4] = To
-        obs[5] = q_win
-        obs[6] = abs(q_hvac)/self.cop
-        obs[7] = self.energy_price[h]
+        obs[5] = q_int
+        obs[6] = q_win
+        obs[7] = q_rad
+        obs[8] = abs(q_hvac)/self.cop
+        obs[9] = self.energy_price[h]
 
         # set next steps
         if self.n_next_steps > 0:
             for i in range(self.n_next_steps):
-                obs[6+i] = To_next_n_steps[i]
-                obs[6+self.n_next_steps+i] = solar_next_n_steps[i]
-                obs[6+self.n_next_steps*2+i] = self.energy_price[(h+i+1)%24]
+                obs[10+i] = To_next_n_steps[i]
+                obs[10+self.n_next_steps+i] = solar_next_n_steps[i]
+                obs[10+self.n_next_steps*2+i] = self.energy_price[(h+i+1)%24]
 
         # set previous steps
         if self.n_prev_steps > 0:
             for i in range(self.n_prev_steps):
-                obs[6+self.n_next_steps*3+i] = self.history['Tz'][i]
-                obs[6+self.n_next_steps*3+self.n_prev_steps+i] = self.history['P'][i]
+                obs[10+self.n_next_steps*3+i] = self.history['Tz'][i]
+                obs[10+self.n_next_steps*3+self.n_prev_steps+i] = self.history['P'][i]
 
         return obs
 
@@ -510,14 +525,9 @@ class R4C3DiscreteEnv(DiscreteLinearStateSpaceEnv):
 
         state_init, _ = super().reset(seed=seed)
 
-        t = self.t
-        h = int(int(t)%86400/3600)
-
-        Tz, _, _ = state_init 
-
         #return np.hstack([state_init, 0.], dtype=np.float32), {}
         disturbance = self._get_disturbance()
         self.observation = self._get_observation(state_init, (state_init[0], 0), disturbance)
         
         print("env is reset!")
-        return np.array(self.observation, dtype=np.float32), {}
+        return np.array(self.observation, dtype=np.float32), {"t": self.t}
