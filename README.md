@@ -77,13 +77,13 @@ check the paper at https://web.stanford.edu/~boyd/papers/pdf/learning_cocps.pdf
 and 
 
 ```
-B. Amos, I. Jimenez, J. Sacks, B. Boots, and J. Z. Kolter. Dierentiable MPC for endto-
+B. Amos, I. Jimenez, J. Sacks, B. Boots, and J. Z. Kolter. Differentiable MPC for endto-
 end planning and control. In Advances in Neural Information Processing Systems,
 pages 8299{8310, 2018.
 ```
 
 ```
-M. Okada, L. Rigazio, and T. Aoshima. Path integral networks: End-to-end dierentiable
+M. Okada, L. Rigazio, and T. Aoshima. Path integral networks: End-to-end differentiable
 optimal control. arXiv preprint arXiv:1706.09597, 2017.
 ```
 
@@ -92,13 +92,26 @@ optimal control. arXiv preprint arXiv:1706.09597, 2017.
 ## Forward Simulation
 
 ```python
+from dynax.agents import TabularAgent
 from dynax.systems import LinearODESystem
 from dynax.solvers import Euler
 
-lode = LinearODESystem()
+# specifying a piecewise constant control agent from given control sequence
+t, u = np.linspace(0, 1, 100), np.random.rand(100)
+control = TabularAgent(t, u)
+
+# specifying a linear ODE system
+# lode = LinearODESystem()
+# specifying a RC model for building energy system
+lode = RCModel()
+
+# specifying a numerical solver
 solver = Euler()
+
+# specifying a simulator
 ds = Simulator(lode, solver)
 
+# simulate the system
 ts = 0
 te = 1
 dt = 0.01
@@ -106,6 +119,127 @@ t, y = ds.simulate(ts, te, dt)
 
 ```
 
+## Inverse Simulation
+
+```python
+from dynax.dataloader import DataLoader
+from dynax.agents import TabularAgent
+from dynax.utils import LinearInterpolation
+from dynax.estimators import LeastSquareEstimator
+from dynax.systems import LinearODESystem
+from dynax.solvers import Euler
+from dynax.problems import InverseProblem
+from dynax.optimizers import GradientDescent
+from dynax.trainers import Trainer
+from dynax.trainers import TrainStates
+
+# load data
+data_loader = DataLoader()
+data_loader.load_data('data/linear_ode.csv')
+
+# specify a piecewise constant control/disturbance agent
+control = TabularAgent(data_loader.t, data_loader.u)
+disturbance = LinearInterpolation(data_loader.t, data_loader.d)
+
+# specify a linear ODE system
+lode = RCModel(control, disturbance)
+
+# specify a numerical solver
+solver = Euler()
+
+# specify a simulator
+ds = Simulator(lode, solver)
+
+# specify a least square estimator
+estimator = LeastSquareEstimator()
+
+# loss function
+def loss_fn(y, y_hat):
+    return np.sum((y - y_hat)**2)
+
+# specify a gradient descent optimizer
+optimizer = GradientDescent()
+
+# specify an inverse problem:
+# y' = f(x, u, d, p)
+# min_{p} ||y - y'||^2
+inverse_problem = InverseProblem(ds, estimator, params, loss_fn, data_loader, optimizer)
+
+# specify a trainer
+trainer = Trainer(inverse_problem, num_epochs=1000, batch_size=100, lr=0.01)
+
+# train the model
+trainer.train(data_loader, TrainStates)
+
+```
+
+## Optimal Control: MPC
+
+```python
+from dynax.dataloader import DataLoader
+from dynax.agents import MPC
+from dynax.utils import LinearInterpolation
+from dynax.estimators import LeastSquareEstimator
+from dynax.systems import LinearODESystem
+from dynax.solvers import Euler
+from dynax.problems import InverseProblem
+from dynax.optimizers import GradientDescent
+from dynax.trainers import Trainer
+from dynax.trainers import TrainStates
+
+import gymnasium as gym
+from envs import building
+
+# load data
+data_loader = DataLoader()
+data_loader.load_data('data/linear_ode.csv')
+
+# specify a piecewise constant control/disturbance agent
+disturbance = LinearInterpolation(data_loader.t, data_loader.d)
+
+# specify a linear ODE system
+lode = RCModel()
+
+# specify a numerical solver
+solver = Euler()
+
+# specify a simulator
+ds = Simulator(lode, solver)
+
+# specify a least square estimator
+estimator = LeastSquareEstimator()
+
+# loss function
+def loss_fn(y, y_hat):
+    return np.sum((y - y_hat)**2)
+
+# specify a gradient descent optimizer
+optimizer = GradientDescent()
+
+# specify an implicit MPC control problem
+mpc_problem = ImplicitMPCProblem(ds, estimator, params, loss_fn, data_loader, optimizer)
+
+# specify a virtual environment with measurement nosie if possible
+env = gym.make('building-v0')
+
+# specify a trainer
+trainer = Trainer(mpc_problem, env)
+
+# train the model
+trainer.train(data_loader)
+
+# test the model
+tester = Tester(mpc_problem, env)
+tester.test(data_loader)
+
+```
+
+## Optimal Control: DRL
+
+```python
+from dynax.agents.drls.offpolicy import DDQN
+
+```
 
 
 # Contact
