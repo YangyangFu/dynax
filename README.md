@@ -87,6 +87,27 @@ M. Okada, L. Rigazio, and T. Aoshima. Path integral networks: End-to-end dieren
 optimal control. arXiv preprint arXiv:1706.09597, 2017.
 ```
 
+# Use Cases
+
+## Forward Simulation
+
+```python
+from dynax.systems import LinearODESystem
+from dynax.solvers import Euler
+
+lode = LinearODESystem()
+solver = Euler()
+ds = Simulator(lode, solver)
+
+ts = 0
+te = 1
+dt = 0.01
+t, y = ds.simulate(ts, te, dt)
+
+```
+
+
+
 # Contact
 
 Yangyang Fu
