@@ -3,7 +3,7 @@
 Dynamic system in Jax (Dynax): This repo implements a differentiable simulator for building energy systems to support forward simulation, parameter inference and optimal control.
 
 # Software Architecture
-![structure](./doc/structure.png)
+![structure](./doc/dynax-module.png)
 
 1. NeuralNetwork: a deep-learning framework based parametric programming module, e.g., pytorch, Flax etc.
 2. DataLoader: prepare dynamic system data to trainable and testable data format
