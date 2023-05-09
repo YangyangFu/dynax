@@ -171,7 +171,7 @@ class QNetwork(nn.Module):
 class LSSM(nn.Module):
     state_dim: int 
     action_dim: int
-    disturbancce_dim: int
+    disturbance_dim: int
     output_dim: int
     dt: float 
 
@@ -191,7 +191,7 @@ class LSSM(nn.Module):
                       (self.state_dim, self.action_dim))
       Bd = self.param('Bd',
                       self.initializer,
-                      (self.state_dim, self.disturbancce_dim))
+                      (self.state_dim, self.disturbance_dim))
 
       C = self.param('C',
                       self.initializer,
