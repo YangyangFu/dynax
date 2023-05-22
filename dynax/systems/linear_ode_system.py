@@ -3,14 +3,17 @@ from typing import Callable, List, Tuple, Union
 import jax.numpy as jnp
 import flax.nn as nn
 
-class LinearODESystem(nn):
+class BaseBlockStateSpace(nn):
+    pass
+
+class ContinuousLTIStateSpace(nn):
     r"""
-    Linear ODE System
+    Continuouse state space system
     
     This model is defined as follows:
 
     $$\dot x_t = Ax_t + B_uu_t + B_dd_t$$
-    $$ y_t = Cx_t + Du_t$$
+    $$ y_t = Cx_t + D_uu_t + D_dd_t$$
     
     where 
 
@@ -56,25 +59,29 @@ class LinearODESystem(nn):
     @nn.compact
     def __call__(self, x, u, d):
 
-      A = self.param('A',
-                      self.initializer, # initialization
-                      (self.state_dim, self.state_dim)) # shape
-      Bu = self.param('Bu',
-                      self.initializer, # initialization
-                      (self.state_dim, self.action_dim))
-      Bd = self.param('Bd',
-                      self.initializer,
-                      (self.state_dim, self.disturbance_dim))
-      C = self.param('C',
-                      self.initializer,
-                      (self.output_dim, self.state_dim))
-      D = self.param("D",
-                      self.initializer,
-                      (self.output_dim, self.action_dim))
-      xdot = jnp.dot(x, A.T) + jnp.dot(u, Bu.T) + jnp.dot(d, Bd.T)
+        A = self.param('A',
+                        self.initializer, # initialization
+                        (self.state_dim, self.state_dim)) # shape
+        Bu = self.param('Bu',
+                        self.initializer, # initialization
+                        (self.state_dim, self.control_dim))
+        Bd = self.param('Bd',
+                        self.initializer,
+                        (self.state_dim, self.disturbance_dim))
+        C = self.param('C',
+                        self.initializer,
+                        (self.observation_dim, self.state_dim))
+        Du = self.param("Du",
+                        self.initializer,
+                        (self.observation_dim, self.control_dim))
 
-      #x_next = xdot * self.dt + x
-      #y_next = jnp.dot(x_next, C.T) + jnp.dot(u, D.T)
-      
-      return xdot
+        Dd = self.param("Dd",
+                        self.initializer,
+                        (self.observation_dim, self.disturbance_dim))
+        xdot = jnp.dot(x, A.T) + jnp.dot(u, Bu.T) + jnp.dot(d, Bd.T)
+
+        #x_next = xdot * self.dt + x
+        y = jnp.dot(x, C.T) + jnp.dot(u, Du.T) + jnp.dot(d, Dd.T)
+        
+        return xdot, y
 
