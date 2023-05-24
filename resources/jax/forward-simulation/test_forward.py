@@ -64,7 +64,6 @@ print(params['params'].keys())
 # visualize models
 print(model.tabulate(jax.random.PRNGKey(0), jnp.ones((1,1))))
 
-
 # train
 optimizer = optax.sgd(learning_rate = 1e-02)
 states_opt = optimizer.init(params)
