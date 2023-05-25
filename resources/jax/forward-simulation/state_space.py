@@ -46,17 +46,11 @@ class LinearStateSpaceModel(BaseBlockSSM):
     output_dim: int
 
     def setup(self):
-        """
-        self._fxx = nn.Dense(features=self.state_dim, use_bias=False)
-        self._fxu = nn.Dense(features=self.state_dim, use_bias=False)
-        self._fyx = nn.Dense(features=self.output_dim, use_bias=False)
-        self._fyu = nn.Dense(features=self.output_dim, use_bias=False)
-        """
         self._fxx = self.fxx(self.state_dim)
         self._fxu = self.fxu(self.state_dim)
         self._fyx = self.fyx(self.output_dim)
         self._fyu = self.fyu(self.output_dim)
-        
+
     def __call__(self, state, input):
         return super().__call__(state, input)
     
@@ -198,7 +192,7 @@ def forward_step(params, state, input):
     new_state, output = model.apply(params, state, input)
     return new_state, output
 
-n_steps = 100 
+n_steps = 1000 
 n = 0
 ts = time.time()
 while n < n_steps:
@@ -208,7 +202,7 @@ while n < n_steps:
     # apply a fake parameter update 
     params = jax.tree_map(lambda x: x + 0.1, params)
     n += 1
-    print(state, output)
+    #print(state, output)
 te = time.time()
 print(f"forward simulation takes {te-ts} seconds")
 
