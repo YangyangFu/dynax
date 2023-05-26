@@ -79,7 +79,7 @@ class Discrete4R3C(BaseDiscreteBlockSSM):
             A = A.at[1, 2].set(1/(self.Cwe*self.Rw))
             A = A.at[2, 0].set(1/(self.Cwi*self.Ri))
             A = A.at[2, 1].set(1/(self.Cwi*self.Rw))
-            A = A.at[2, 2].set(-1/self.Cwi*(1/self.Rw+1/self.Ri))
+            A = A.at[2, 2].set(-1/self.Cwi*(1/self.Rw+1/self.Ri))            
             self.A = A
 
         def __call__(self, x):
@@ -154,7 +154,10 @@ class Continuous4R3C(BaseContinuousBlockSSM):
         output_dim: dimension of the output
     
     """
-
+    state_dim: int = 3
+    input_dim: int = 5
+    output_dim: int = 1
+    
     # need overwrite the learnable parameters using RC parameters
     def setup(self):
         super().setup()

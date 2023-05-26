@@ -5,6 +5,8 @@ import numpy as np
 from jax import jit
 from jax import grad
 from diffrax import diffeqsolve, ODETerm, Euler, Dopri5, SaveAt, PIDController
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import time 
 
@@ -87,7 +89,6 @@ x0 = jnp.array([20., 30., 26.])
 dx0 = f(0, y=x0, args=(A, B, d[0,:]))
 print(dx0.shape)
 print(dx0)
-
 
 ts = 0
 te = 86400*30
