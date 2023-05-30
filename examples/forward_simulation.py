@@ -5,6 +5,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import time 
 
 from dynax.models.RC import Discrete4R3C
 from dynax.models.RC import Continuous4R3C
@@ -74,6 +75,8 @@ outputs = []
 # main loop
 n_steps = len(inputs_dt)
 i = 0
+
+ts = time.time()
 while i < n_steps:
     # random input
     ut = u_dt[i,:]
@@ -87,6 +90,8 @@ while i < n_steps:
 
     # save output
     outputs.append(output)
+te = time.time()
+print('time elapsed with jit: ', te-ts)
 
 # plot the results  
 plt.figure()

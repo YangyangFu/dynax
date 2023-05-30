@@ -9,6 +9,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from flax.training.train_state import TrainState
 import optax 
+import time 
 
 from dynax.models.RC import Discrete4R3C
 from dynax.models.RC import Continuous4R3C
@@ -39,7 +40,6 @@ u_dt = inputs_dt.values[:,:5]
 y_dt = inputs_dt.values[:,5] 
 
 # TODO: construct a data loader
-
 # forward step with euler method
 @Partial(jax.jit, static_argnums=(0,))
 def forward_step(model, params, state, input, dt):
@@ -53,14 +53,20 @@ def forward(model, params, state, inputs, t, dt):
     """
     n_steps = len(t)
     new_state = state
-    states = jnp.zeros((n_steps, state_dim))
-    outputs = jnp.zeros((n_steps, output_dim))
+    states = [state]
+    outputs = []
     for i in range(n_steps):
         new_state, output = forward_step(model, params, new_state, inputs[i,:], dt)
-        states = states.at[i].set(new_state)
-        outputs = outputs.at[i].set(output)
+        
+        # these two steps are slow: 95% of the time is spent on these two steps
+        #states = states.at[i].set(new_state)
+        #outputs = outputs.at[i].set(output)
+        # list append is much faster but still takes 50% of the time
+        states.append(new_state)
+        outputs.append(output)
 
-    return states, outputs
+    # jnp.array(list) is very slow
+    return jnp.array(states), jnp.array(outputs)
 
 # forward simulation
 tsol = jnp.arange(0, len(u_dt)*dt, dt)
@@ -72,92 +78,61 @@ params = model.init(key, state, u_dt[0,:])
 
 # simulate the model
 states, outputs = forward(model, params, state, u_dt,  tsol, dt)
-print(states.shape, outputs.shape)
+#print(states.shape, outputs.shape)
 
-# train state
-lr = 0.001
+# simulate with given params: Cai, Cwe, Cwi, Re, Ri, Rw, Rg
+params = [10384.31640625, 499089.09375, 1321535.125,
+        1.5348844528198242, 0.5000327825546265, 1.000040054321289, 
+        20.119935989379883]
+rc = {'Cai': params[0], 'Cwe': params[1], 'Cwi': params[2],
+    'Re': params[3], 'Ri': params[4], 'Rw': params[5], 'Rg': params[6]
+    }
+params_true = {'params': rc}
 
-# we consider inverse simulation as an optimization problem
-# train_state: contains the parameters, bounds, forward simulation settings, etc.
-#   - step: interation step
-#   - params: learnable parameters
-#   - tx: optimizer
-#   - apply_fn: forward simulation function
-#   - params_lb: lower bound of the parameters
-#   - params_ub: upper bound of the parameters
-
-params_init = model.init(key, state, u_dt[0,:])
-params_lb = params_init.unfreeze()
-params_lb['params'] = {'Cai': 1.0E4, 'Cwe': 1.0E5, 'Cwi': 1.0E6, 'Re': 1.0E1, 'Ri': 1.0E1, 'Rw': 1.0E1, 'Rg': 1.0E1} # 'Twe0': 30.0, 'Twi0': 30.0
-params_ub = params_init.unfreeze()
-params_ub['params'] = {'Cai': 1.0E6, 'Cwe': 1.0E7, 'Cwi': 1.0E8, 'Re': 1.0E3, 'Ri': 1.0E3, 'Rw': 1.0E3, 'Rg': 1.0E3}
-print(params_init)
-print(params_lb['params'].values())
-
-class InverseProblemState(TrainState):
-    params_lb: nn.Module
-    params_ub: nn.Module
-
-train_state = InverseProblemState.create(
-    apply_fn=forward,
-    params=model.init(key, state, u_dt[0,:]),
-    tx = optax.adam(learning_rate=lr),
-    params_lb = params_lb,
-    params_ub = params_ub
-)
+ts = time.time()
+states, outputs = forward(model, params_true, state, u_dt,  tsol, dt)
+te = time.time()
+print('forward simulation with jit takes {} seconds'.format(te-ts))
 
 # =========================================================
 # Method 2 for forward simulation: nn.Module
 #   - need add jit to forward otherwise slow simulation
+#   - 50% slower than Method 1
 # =========================================================
 
-# inherite from a nn.Module seems not a good idea as the parameters are hard to propogate from low-level models to high-level simulator
+# inherite from a nn.Module 
 class Simulator(nn.Module):
+    model: nn.Module
     t: jnp.ndarray
     dt: float
-
-    def setup(self):
-        self.model = model
-
+    
+    # TODO: add a solver for ODEs
     def __call__(self, x_init, u):
-        xsol = jnp.zeros((len(self.t)+1, self.model.state_dim))
-        ysol = jnp.zeros((len(self.t), self.model.output_dim))
-
+        xsol = []
+        ysol = [] #jnp.array([]).reshape(0, self.model.output_dim)
         xi = x_init
-        xsol = xsol.at[0].set(xi)
+        #xsol = xsol.at[0].set(xi)
+        xsol.append(xi)
         u = u.reshape(-1, self.model.input_dim)
         for i in range(len(self.t)):
             ui = u[i,:]
             xi_rhs, yi = self.model(xi, ui)
             # explicit Euler
             xi = xi + xi_rhs*self.dt
-
+            
             # save results
-            xsol = xsol.at[i+1].set(xi)
-            ysol = ysol.at[i].set(yi)
+            #xsol = xsol.at[i+1].set(xi)
+            #ysol = ysol.at[i].set(yi)
+            xsol.append(xi)
+            ysol.append(yi)
+            
+        return jnp.array(xsol), jnp.array(ysol)
 
-        return xsol, ysol
-
-simulator = Simulator(tsol, dt)
-params_sim = simulator.init(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), u_dt) 
-print(params_sim)
+simulator = Simulator(model, tsol, dt)
 print(simulator.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), u_dt))
 
-# inverse simulation train_step
-def train_step(train_state, state_init, u, t, dt, target):
-    
-    def mse_loss(params):
-        # prediction
-        outputs_pred = forward(model, params, state_init, u, t, dt)
-        pred_loss = jnp.mean((outputs_pred - target)**2)
-
-        # parameter regularization
-        reg = jnp.sum(jax.nn.relu(params['params'] - train_state.params_ub['params']) + jax.nn.relu(train_state.params_lb['params'] - params['params']))
-        
-        return pred_loss + reg
-    
-    loss, grad = jax.value_and_grad(mse_loss)(train_state.params)
-    train_state = train_state.apply_gradients(grads=grad)
-
-    return loss, grad, train_state
-
+params_true = {'params': {'model': params_true['params']}}
+ts = time.time()
+states, outputs = simulator.apply(params_true, state, u_dt)
+te = time.time()
+print('forward simulation without jit takes {} seconds'.format(te-ts))
