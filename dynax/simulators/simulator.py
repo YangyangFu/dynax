@@ -2,6 +2,9 @@ import flax.linen as nn
 import jax.numpy as jnp
 from ..systems.base_block_state_space import BaseBlockSSM
 
+# TODO:
+# 1. append to list is faster than jnp.append()/vstack()/hstack()
+# 2. the current framework for observation function is one step lagged, which is not consistent with the current framework for state function
 class DifferentiableSimulator(nn.Module):
     model: BaseBlockSSM
     t: jnp.ndarray
@@ -29,5 +32,5 @@ class DifferentiableSimulator(nn.Module):
             ysol.append(yi)
         
         # return list directly is faster than jnp.array()
-        return jnp.array(xsol), jnp.array(ysol)
+        return xsol, ysol
 
