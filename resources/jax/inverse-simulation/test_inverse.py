@@ -10,22 +10,22 @@ import matplotlib.pyplot as plt
 from flax.training.train_state import TrainState
 from flax.core.frozen_dict import freeze
 import optax 
+import json 
 
 from dynax.models.RC import Discrete4R3C
 from dynax.models.RC import Continuous4R3C
 
+# FIXME: 
+#   - the backward propagation is slower than functional programming as previous paper implementation 
+#   - this approach seems leads to one-step delayed in the simulation compared with the data. see the forward simulation plots
+#   - understand why the baseline model (simply uses values from previous time step as current prediction) is accurate enough for output predictions
+# ===========================================================
 # instantiate a model
 #model = Discrete4R3C()
 model = Continuous4R3C()
 state_dim = model.state_dim
 input_dim = model.input_dim
 output_dim = model.output_dim
-
-# ===========================================================
-# Method 1 for forward simulation: jittable function
-# ===========================================================
-# investigate the model structure
-print(model.tabulate(jax.random.PRNGKey(0), jnp.zeros((state_dim,)), jnp.zeros((input_dim,))))
 
 # load calibration data
 data = pd.read_csv('./disturbance_1min.csv', index_col=[0])
@@ -49,10 +49,10 @@ u_train = jnp.array(data_train.values[:,:5])
 y_train = jnp.array(data_train.values[:,5])
 
 # forward simulation
-tsol = jnp.arange(0, len(u_train)*dt, dt)
+tsol = jnp.arange(0, len(u_train), 1)*dt
 state = jnp.array([y_train[0], 36., 25.])  # initial state
 
-# inherite from a nn.Module seems not a good idea as the parameters are hard to propogate from low-level models to high-level simulator
+# inherite from a nn.Module 
 class Simulator(nn.Module):
     model: nn.Module
     t: jnp.ndarray
@@ -64,12 +64,17 @@ class Simulator(nn.Module):
         def scan_fn(carry, ts):
             i, xi = carry
             ui = u[i,:]
+
+            # forward simulation
+            # \dot x(t) = f(x(t), u(t))
+            # y(t) = g(x(t), u(t))
             xi_rhs, yi = self.model(xi, ui)
             
             # explicit Euler
-            xi = xi + xi_rhs*self.dt
+            # x(t+1) = x(t) + dt * \dot x(t)
+            x_next = xi + xi_rhs*self.dt
 
-            return (i+1, xi), (xi, yi)
+            return (i+1, x_next), (xi, yi)
 
         # module has to be called once before the while loop
         _, _ = self.model(x_init, jnp.zeros_like(u[0,:]))
@@ -77,51 +82,26 @@ class Simulator(nn.Module):
         # main simulation loop
         u = u.reshape(-1, self.model.input_dim)   
         carry_init = (0, x_init)
-        carry_final, (xsol, ysol) = jax.lax.scan(scan_fn, carry_init, self.t)
+        # self.t[:-1] is used to avoid the last time step
+        (_, x_final), (xsol, ysol) = jax.lax.scan(scan_fn, carry_init, self.t)
+
+        assert xsol.shape[0] == len(self.t)
+        assert ysol.shape[0] == len(self.t)
 
         return xsol, ysol
-
-# seed
-key = jax.random.PRNGKey(0)
 
 # simulator
 simulator = Simulator(model, tsol, dt)
 
-# mannually set some parameters
-params_init = simulator.init(key, state, u_train) 
-params_true = params_init.unfreeze()
-params = jnp.array([10383.181640625, 499116.6562, 1321286.5, 1.53524649143219, 0.5000227689743042, 1.0003612041473389, 20.09742546081543])
-params_true= {}
-params_true['params'] = {}
-params_true['params']['model'] = {}
-params_true['params']['model'] = {
-    'Cai': params[0],
-    'Cwe': params[1],
-    'Cwi': params[2],
-    'Re': params[3],
-    'Ri': params[4],
-    'Rw': params[5],
-    'Rg': params[6]
-}
-params_true = freeze(params_true)
+# seed
+key = jax.random.PRNGKey(0)
 
+# initialize model parameters
+params_init = simulator.init(key, state, u_train) 
 print(params_init)
 print(simulator.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), u_train))
 
-# define a forward simulation
-xs, ys = simulator.apply(params_true, state, u_train)
-print(jnp.mean((ys - y_train)**2))
-
-
-plot = True
-if plot:
-    plt.figure()
-    plt.plot(tsol, y_train, label='Measured')
-    plt.plot(tsol, ys, label='Simulated')
-    plt.legend()
-    plt.savefig('forward.png')
-
-# parameter settings
+# parameter bounds settings
 params_lb = params_init.unfreeze()
 params_lb['params']['model']['Cai'] = 3.0E3
 params_lb['params']['model']['Cwe'] = 5.0E4
@@ -141,8 +121,6 @@ params_ub['params']['model']['Ri'] = 5.0
 params_ub['params']['model']['Rw'] = 1.0E1
 params_ub['params']['model']['Rg'] = 5.0E1
 params_ub = freeze(params_ub)
-print(params_init)
-print(params_lb['params']['model'].values())
 
 # inverse problem train state
 class InverseProblemState(TrainState):
@@ -156,10 +134,12 @@ def train_step(train_state, state_init, u, target):
     def mse_loss(params):
         # prediction
         _, outputs_pred = train_state.apply_fn(params, state_init, u)
-        pred_loss = jnp.mean((outputs_pred - target)**2)
+        # mse loss: match dimensions
+        pred_loss = jnp.mean((outputs_pred.reshape(-1,1) - target.reshape(-1,1))**2)
 
         # parameter regularization
-        normalizer = jax.tree_util.tree_map(lambda x, y: y-x, train_state.params_ub, train_state.params_lb)
+        # normalizer = jax.tree_util.tree_map(lambda x, y: x-y, train_state.params_ub, train_state.params_lb)
+        normalizer = train_state.params_ub
         over = jax.tree_util.tree_map(lambda x, y, z: jax.nn.relu(x-y)/z, params, train_state.params_ub, normalizer)
         under = jax.tree_util.tree_map(lambda x, y, z: jax.nn.relu(y-x)/z, params, train_state.params_lb, normalizer)
         reg = sum(jax.tree_util.tree_leaves(over)) + sum(jax.tree_util.tree_leaves(under))
@@ -172,73 +152,78 @@ def train_step(train_state, state_init, u, target):
 
     return loss, grad, train_state
 
-schedule = optax.exponential_decay(
-    init_value = 1e-3, 
-    transition_steps = 20000, 
-    decay_rate = 0.995, 
-    transition_begin=1000, 
-    staircase=False, 
-    end_value=1e-05
-)
-
 optim = optax.chain(
     #optax.clip_by_global_norm(1.0),
     #optax.clip(1.0),
     #optax.scale(1.2),
-    optax.adamw(1e-04),
+    optax.lamb(1e-03),
 )
-
 
 train_state = InverseProblemState.create(
     apply_fn=simulator.apply,
-    params=params_true,
+    params=params_ub,
     tx = optim,
     params_lb = params_lb,
     params_ub = params_ub
 )
 
-def mse_loss(params, state_init, u, target):
-    # prediction
-    _, outputs_pred = train_state.apply_fn(params, state_init, u)
-    pred_loss = jnp.mean((outputs_pred - target)**2)
-
-    # parameter regularization
-    normalizer = jax.tree_util.tree_map(lambda x, y: y-x, train_state.params_ub, train_state.params_lb)
-    over = jax.tree_util.tree_map(lambda x, y, z: jax.nn.relu(x-y)/z, params, train_state.params_ub, normalizer)
-    under = jax.tree_util.tree_map(lambda x, y, z: jax.nn.relu(y-x)/z, params, train_state.params_lb, normalizer)
-    reg = sum(jax.tree_util.tree_leaves(over)) + sum(jax.tree_util.tree_leaves(under))
-    #reg = jnp.sum()
-    
-    return pred_loss, reg
-
-# check the loss
-print(train_state.params)
-#loss, reg = mse_loss(params_true, state, u_train, y_train)
-#print(loss, reg)
-# FIXME: the loss is not correct. mean sqared error is jnp.mean((ys - y_train)**2)
-print("====================================")
-xs, ys = simulator.apply(params_true, state, u_train)
-print(jnp.mean(ys - y_train)**2)
-print(jnp.mean(ys - y_train))
-_, ys = simulator.apply(params_true, state, u_train)
-print(jnp.mean((ys - y_train)**2))
-print("====================================")
-
-
 # training
-n_epochs = 10000
+n_epochs = 5000
 for epoch in range(n_epochs):
     loss, grad, train_state = train_step(train_state, state, u_train, y_train)
-    if epoch % 100 == 0:
-        print('loss at epoch %d: %.4f'%(epoch, loss))
+    if epoch % 1000 == 0:
+        grad_norm = jnp.linalg.norm(jnp.array(jax.tree_util.tree_leaves(grad)))
+        print('loss at epoch %d: %.4f, grad norm %.4f'%(epoch, loss, grad_norm))
 
-# plot the results
-_, outputs_pred = train_state.apply_fn(train_state.params, state, u_train)
+# save trained parameters
+params_trained = train_state.params.unfreeze()['params']['model']
+for k in params_trained.keys():
+    params_trained[k] = params_trained[k].item()
+print(params_trained)
+with open('zone_coefficients.json', 'w') as f:
+    json.dump(params_trained, f)
+
+
+## ==============================================================================
+## post processing
+## ==============================================================================
+# check prediction on training and testing data
+u = jnp.array(data.values[:,:5])
+y_true = jnp.array(data.values[:,5])
+tsol = jnp.arange(0, len(y_true)*dt, dt)
+simulator = Simulator(model, tsol, dt)
+_, outputs_pred = simulator.apply(train_state.params, state, u)
 
 plt.figure(figsize=(12, 6))
-plt.plot(tsol, y_train, 'b', label='target')
-plt.plot(tsol, outputs_pred, 'r', label='prediction')
+plt.plot(y_true, 'b', label='target')
+plt.plot(outputs_pred, 'r', label='prediction')
+plt.vlines(x=n_train, ymin=min(y_true), ymax=max(y_true), color='k', linestyles='--', lw=3, label='Train/Test Split')
+plt.ylabel('Temperature (C)')
 plt.legend()
-plt.savefig('prediction.png')
+plt.grid()
+plt.savefig('parameter_inference.png')
 
-print(train_state.params['params']['model'].values())
+# TODO: how to understand this?
+# how about we compare the prediction with a baseline model
+# baseline model: use previous output as current prediction
+y_pred_baseline = 23. * jnp.ones_like(y_true)
+# update baseline model. do not use jax.ops
+y_pred_baseline = y_pred_baseline.at[1:].set(y_true[:-1])
+plt.figure(figsize=(12, 6))
+plt.plot(y_true, 'b', lw=0.5, label='target')
+plt.plot(outputs_pred, 'r', lw=0.5, label='prediction')
+plt.plot(y_pred_baseline, 'g', lw=0.5, label='baseline')
+plt.vlines(x=n_train, ymin=min(y_true), ymax=max(y_true), color='k', linestyles='--', lw=3, label='Train/Test Split')
+plt.ylabel('Temperature (C)')
+plt.legend()
+plt.grid()
+plt.savefig('ssm_vs_baseline.png')
+
+# TODO: plot at a finer resolution. The simulation seems one-step delayed
+plt.figure(figsize=(12, 6))
+plt.plot(y_true[:24], 'b', label='target')
+plt.plot(outputs_pred[:24], 'r', label='prediction')
+plt.ylabel('Temperature (C)')
+plt.legend()
+plt.grid()
+plt.savefig('prediction_one_day.png')
