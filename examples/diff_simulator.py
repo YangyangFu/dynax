@@ -23,10 +23,10 @@ index = range(0, n_samples*60, 60)
 inputs.index = index
 
 # resample to a given time step
-dt = 900
+dt = 300
 inputs_dt = inputs.groupby([inputs.index // dt]).mean()
-u_dt = inputs_dt.values[:,:5]
-y_dt = inputs_dt.values[:,5] 
+u_dt = jnp.array(inputs_dt.values[:,:5])
+y_dt = jnp.array(inputs_dt.values[:,5])
 
 # forward simulation settings
 tsol = jnp.arange(0, len(u_dt)*dt, dt)

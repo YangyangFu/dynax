@@ -1,36 +1,44 @@
 import flax.linen as nn
+import jax
 import jax.numpy as jnp
 from ..systems.base_block_state_space import BaseBlockSSM
 
 # TODO:
-# 1. append to list is faster than jnp.append()/vstack()/hstack()
-# 2. the current framework for observation function is one step lagged, which is not consistent with the current framework for state function
+# 1. how to best handle the state update? the state update is always 1 step ahead of the output. This will give a problem when used for MPC as a forward simulator.
 class DifferentiableSimulator(nn.Module):
-    model: BaseBlockSSM
+    model: nn.Module
     t: jnp.ndarray
     dt: float
 
+    @nn.compact
     def __call__(self, x_init, u):
-        # NOTE: append to list is faster than jnp.append()/vstack()/hstack()
-        xsol = []
-        ysol = [] #jnp.array([]).reshape(0, self.model.output_dim)
-        xi = x_init
-        xsol.append(xi)
-        u = u.reshape(-1, self.model.input_dim)
+     
+        def scan_fn(carry, ts):
+            i, xi = carry
+            ui = u[i,:]
 
-        for i in range(len(self.t)):
+            # forward simulation
+            # \dot x(t) = f(x(t), u(t))
+            # y(t) = g(x(t), u(t))
+            xi_rhs, yi = self.model(xi, ui)
             
-            xi_rhs, yi = self.model(xi, u[i,:])
-
             # explicit Euler
-            xi = xi + xi_rhs*self.dt
+            # x(t+1) = x(t) + dt * \dot x(t)
+            x_next = xi + xi_rhs*self.dt
 
-            # save results by appending to list, which is 100x faster than jnp.append() or indexing
-            #xsol = xsol.at[i+1].set(xi)
-            #ysol = ysol.at[i].set(yi)
-            xsol.append(xi)
-            ysol.append(yi)
-        
-        # return list directly is faster than jnp.array()
+            return (i+1, x_next), (xi, yi)
+
+        # module has to be called once before the while loop
+        _, _ = self.model(x_init, jnp.zeros_like(u[0,:]))
+
+        # main simulation loop
+        u = u.reshape(-1, self.model.input_dim)   
+        carry_init = (0, x_init)
+        # self.t[:-1] is used to avoid the last time step
+        (_, x_final), (xsol, ysol) = jax.lax.scan(scan_fn, carry_init, self.t)
+
+        assert xsol.shape[0] == len(self.t)
+        assert ysol.shape[0] == len(self.t)
+
         return xsol, ysol
 

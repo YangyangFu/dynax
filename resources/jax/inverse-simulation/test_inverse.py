@@ -14,6 +14,7 @@ import json
 
 from dynax.models.RC import Discrete4R3C
 from dynax.models.RC import Continuous4R3C
+from dynax.simulators.simulator import DifferentiableSimulator
 
 # FIXME: 
 #   - the backward propagation is slower than functional programming as previous paper implementation 
@@ -52,46 +53,8 @@ y_train = jnp.array(data_train.values[:,5])
 tsol = jnp.arange(0, len(u_train), 1)*dt
 state = jnp.array([y_train[0], 36., 25.])  # initial state
 
-# inherite from a nn.Module 
-class Simulator(nn.Module):
-    model: nn.Module
-    t: jnp.ndarray
-    dt: float
-
-    @nn.compact
-    def __call__(self, x_init, u):
-     
-        def scan_fn(carry, ts):
-            i, xi = carry
-            ui = u[i,:]
-
-            # forward simulation
-            # \dot x(t) = f(x(t), u(t))
-            # y(t) = g(x(t), u(t))
-            xi_rhs, yi = self.model(xi, ui)
-            
-            # explicit Euler
-            # x(t+1) = x(t) + dt * \dot x(t)
-            x_next = xi + xi_rhs*self.dt
-
-            return (i+1, x_next), (xi, yi)
-
-        # module has to be called once before the while loop
-        _, _ = self.model(x_init, jnp.zeros_like(u[0,:]))
-
-        # main simulation loop
-        u = u.reshape(-1, self.model.input_dim)   
-        carry_init = (0, x_init)
-        # self.t[:-1] is used to avoid the last time step
-        (_, x_final), (xsol, ysol) = jax.lax.scan(scan_fn, carry_init, self.t)
-
-        assert xsol.shape[0] == len(self.t)
-        assert ysol.shape[0] == len(self.t)
-
-        return xsol, ysol
-
 # simulator
-simulator = Simulator(model, tsol, dt)
+simulator = DifferentiableSimulator(model, tsol, dt)
 
 # seed
 key = jax.random.PRNGKey(0)
@@ -191,7 +154,7 @@ with open('zone_coefficients.json', 'w') as f:
 u = jnp.array(data.values[:,:5])
 y_true = jnp.array(data.values[:,5])
 tsol = jnp.arange(0, len(y_true)*dt, dt)
-simulator = Simulator(model, tsol, dt)
+simulator = DifferentiableSimulator(model, tsol, dt)
 _, outputs_pred = simulator.apply(train_state.params, state, u)
 
 plt.figure(figsize=(12, 6))
