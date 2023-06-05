@@ -2,6 +2,9 @@
 
 Dynamic system in Jax (Dynax): This repo implements a differentiable simulator for building energy systems to support forward simulation, parameter inference and optimal control.
 
+**NOTE**
+This library is still under active development. The APIs are not fully available yet.
+
 # Software Architecture
 ![structure](./doc/dynax-module.png)
 
