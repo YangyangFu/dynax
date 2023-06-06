@@ -190,3 +190,20 @@ plt.ylabel('Temperature (C)')
 plt.legend()
 plt.grid()
 plt.savefig('prediction_one_day.png')
+
+# peformance KPIs
+def cvrmse(y, y_pred):
+    return jnp.sqrt(jnp.mean((y-y_pred)**2))/jnp.mean(y)
+
+def rmse(y, y_pred):
+    return jnp.sqrt(jnp.mean((y-y_pred)**2))
+def mae(y, y_pred):
+    return jnp.mean(jnp.abs(y-y_pred))
+
+y_true = y_true.reshape(-1,1)
+print('cvrmse on training data: %.4f'%cvrmse(y_true[:n_train], outputs_pred[:n_train]))
+print('rmse on training data: %.4f'%rmse(y_true[:n_train], outputs_pred[:n_train]))
+print('mae on training data: %.4f'%mae(y_true[:n_train], outputs_pred[:n_train]))
+print('cvrmse on testing data: %.4f'%cvrmse(y_true[n_train:], outputs_pred[n_train:]))
+print('rmse on testing data: %.4f'%rmse(y_true[n_train:], outputs_pred[n_train:]))
+print('mae on testing data: %.4f'%mae(y_true[n_train:], outputs_pred[n_train:]))

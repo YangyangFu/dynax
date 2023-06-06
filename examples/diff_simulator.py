@@ -23,7 +23,7 @@ index = range(0, n_samples*60, 60)
 inputs.index = index
 
 # resample to a given time step
-dt = 300
+dt = 3600
 inputs_dt = inputs.groupby([inputs.index // dt]).mean()
 u_dt = jnp.array(inputs_dt.values[:,:5])
 y_dt = jnp.array(inputs_dt.values[:,5])
