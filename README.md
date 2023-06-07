@@ -92,7 +92,9 @@ optimal control. arXiv preprint arXiv:1706.09597, 2017.
 
 # Use Cases
 
-## Forward Simulation
+## Forward Simulation with predefined control inputs
+This is an example to simulate cases where the control inputs are predefined over time as an external file, such as csv. 
+This case is typical for inverse inference of a given model using existing data.
 
 ```python
 from dynax.agents import TabularAgent

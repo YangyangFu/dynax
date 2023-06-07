@@ -5,16 +5,32 @@ from ..systems.base_block_state_space import BaseBlockSSM
 
 # TODO:
 # 1. how to best handle the state update? the state update is always 1 step ahead of the output. This will give a problem when used for MPC as a forward simulator.
+# 2. is this design modular enough to handle different scenarios of input models? e.g. neural network, tabular, etc.
+
 class DifferentiableSimulator(nn.Module):
     model: nn.Module
-    t: jnp.ndarray
     dt: float
 
     @nn.compact
-    def __call__(self, x_init, u):
-     
+    def __call__(self, x_init, u, tsol):
+        """ Differentiable simulator for a given model and simulation settings. 
+
+        Args:
+            x_init (jnp.ndarray): initial state
+            u (jnp.ndarray): control input
+            tsol (jnp.ndarray): time vector for outputs
+        
+        Returns:
+            xsol (jnp.ndarray): state trajectory
+            ysol (jnp.ndarray): output trajectory
+
+        """
+
         def scan_fn(carry, ts):
             i, xi = carry
+
+            # or ui = u.act(t)
+            # how to deal with a mixture of agents (neural policy for control, tabular for disturbance)
             ui = u[i,:]
 
             # forward simulation
@@ -35,10 +51,11 @@ class DifferentiableSimulator(nn.Module):
         u = u.reshape(-1, self.model.input_dim)   
         carry_init = (0, x_init)
         # self.t[:-1] is used to avoid the last time step
-        (_, x_final), (xsol, ysol) = jax.lax.scan(scan_fn, carry_init, self.t)
+        (_, x_final), (xsol, ysol) = jax.lax.scan(scan_fn, carry_init, tsol)
 
-        assert xsol.shape[0] == len(self.t)
-        assert ysol.shape[0] == len(self.t)
+        # TODO: interpolate outputs from solver to match the time vector
+        assert xsol.shape[0] == len(tsol)
+        assert ysol.shape[0] == len(tsol)
 
         return xsol, ysol
 
