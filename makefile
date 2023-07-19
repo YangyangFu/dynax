@@ -1,7 +1,7 @@
 HOST = yangyangfu
 
 # define image names
-IMAGE_NAME = diffbuildings
+IMAGE_NAME = dynax
 TAG_JL = jl
 TAG_JAX_CPU = jax-cpu
 TAG_JAX_CUDA = jax-cuda 

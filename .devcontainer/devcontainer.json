@@ -2,7 +2,7 @@
 // README at: https://github.com/devcontainers/templates/tree/main/src/docker-existing-dockerfile
 {
 	"name": "jax-cpu",
-	"image": "yangyangfu/drlax-debug:latest",
+	"image": "yangyangfu/dynax-jax-cpu:latest",
 	"runArgs": [
 		"--shm-size=8.0gb",
 		"--rm",
@@ -15,6 +15,9 @@
 				"ms-python.python",
 				"yzhang.markdown-all-in-one"
 			]
+		},
+		"settings": {
+			"python.pythonPath": "/workspaces/"
 		}
 	}
 }
