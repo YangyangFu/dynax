@@ -50,19 +50,20 @@ u_train = jnp.array(data_train.values[:,:5])
 y_train = jnp.array(data_train.values[:,5])
 
 # forward simulation
-tsol = jnp.arange(0, len(u_train), 1)*dt
+ts = 0
+te = len(u_train)*dt
 state = jnp.array([y_train[0], 36., 25.])  # initial state
 
 # simulator
-simulator = DifferentiableSimulator(model, tsol, dt)
+simulator = DifferentiableSimulator(model, dt)
 
 # seed
 key = jax.random.PRNGKey(0)
 
 # initialize model parameters
-params_init = simulator.init(key, state, u_train) 
+params_init = simulator.init(key, state, u_train, ts, te) 
 print(params_init)
-print(simulator.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), u_train))
+print(simulator.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), u_train, ts, te))
 
 # parameter bounds settings
 params_lb = params_init.unfreeze()
@@ -96,7 +97,7 @@ def train_step(train_state, state_init, u, target):
 
     def mse_loss(params):
         # prediction
-        _, outputs_pred = train_state.apply_fn(params, state_init, u)
+        _, _, outputs_pred = train_state.apply_fn(params, state_init, u, ts, te)
         # mse loss: match dimensions
         pred_loss = jnp.mean((outputs_pred.reshape(-1,1) - target.reshape(-1,1))**2)
 
@@ -153,9 +154,10 @@ with open('zone_coefficients.json', 'w') as f:
 # check prediction on training and testing data
 u = jnp.array(data.values[:,:5])
 y_true = jnp.array(data.values[:,5])
-tsol = jnp.arange(0, len(y_true)*dt, dt)
-simulator = DifferentiableSimulator(model, tsol, dt)
-_, outputs_pred = simulator.apply(train_state.params, state, u)
+ts = 0 
+te = len(y_true)*dt
+simulator = DifferentiableSimulator(model, dt)
+_, states_pred, outputs_pred = simulator.apply(train_state.params, state, u, ts, te)
 
 plt.figure(figsize=(12, 6))
 plt.plot(y_true, 'b', label='target')
