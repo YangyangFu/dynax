@@ -15,9 +15,6 @@
 				"ms-python.python",
 				"yzhang.markdown-all-in-one"
 			]
-		},
-		"settings": {
-			"python.pythonPath": "/workspaces/"
 		}
 	}, 
 	"remoteEnv": {
