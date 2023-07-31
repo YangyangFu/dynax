@@ -64,7 +64,11 @@ key = jax.random.PRNGKey(0)
 params_init = simulator.init(key, state, u_train, ts, te) 
 print(params_init)
 print(simulator.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), u_train, ts, te))
-
+t_pred, _, outputs_pred = simulator.apply(params_init, state, u_train, ts, te)
+print(t_pred.shape, outputs_pred.shape)
+print(t_pred[0], t_pred[-1], ts, te)
+print(n_train)
+print(sss)
 # parameter bounds settings
 params_lb = params_init.unfreeze()
 params_lb['params']['model']['Cai'] = 3.0E3
