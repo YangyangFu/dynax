@@ -51,7 +51,7 @@ y_train = jnp.array(data_train.values[:,5])
 
 # forward simulation
 ts = 0
-te = len(u_train)*dt
+te = (len(u_train) - 1)*dt
 state = jnp.array([y_train[0], 36., 25.])  # initial state
 
 # simulator
@@ -68,7 +68,7 @@ t_pred, _, outputs_pred = simulator.apply(params_init, state, u_train, ts, te)
 print(t_pred.shape, outputs_pred.shape)
 print(t_pred[0], t_pred[-1], ts, te)
 print(n_train)
-print(sss)
+
 # parameter bounds settings
 params_lb = params_init.unfreeze()
 params_lb['params']['model']['Cai'] = 3.0E3
@@ -159,7 +159,7 @@ with open('zone_coefficients.json', 'w') as f:
 u = jnp.array(data.values[:,:5])
 y_true = jnp.array(data.values[:,5])
 ts = 0 
-te = len(y_true)*dt
+te = (len(y_true)-1)*dt
 simulator = DifferentiableSimulator(model, dt)
 _, states_pred, outputs_pred = simulator.apply(train_state.params, state, u, ts, te)
 
