@@ -9,6 +9,8 @@ import time
 
 from dynax.models.RC import Discrete4R3C
 from dynax.models.RC import Continuous4R3C
+from dynax.agents import Tabular
+from dynax.utils.interpolate import PiecewiseConstantInterpolation, LinearInterpolation
 
 # a simple RC zone model -> ODE system
 """
@@ -65,6 +67,10 @@ inputs_dt = inputs.groupby([inputs.index // dt]).mean()
 u_dt = inputs_dt.values[:,:5]
 y_dt = inputs_dt.values[:,5] 
 
+# control agent
+n_steps = len(inputs_dt)
+policy = Tabular(states=jnp.arange(n_steps)*dt, actions=u_dt, interpolation=LinearInterpolation())
+
 # simulate the model for 100 steps
 # initial state
 state = jnp.array([20., 30., 26.])  
@@ -73,24 +79,25 @@ state = jnp.array([20., 30., 26.])
 outputs = []
 
 # main loop
-n_steps = len(inputs_dt)
-i = 0
+t = 0
 
 ts = time.time()
-while i < n_steps:
-    # random input
-    ut = u_dt[i,:]
+while t < n_steps*dt:
+        # tabular control signal 
+        ut = policy(t)
+        ut = ut.reshape((input_dim,))
 
-    # advance one step
-    new_state, output = forward_step(params, state, ut)
+        # advance one step
+        new_state, output = forward_step(params, state, ut)
 
-    # update state
-    state = new_state
-    i += 1
+        # update state
+        state = new_state
+        t += dt
 
-    # save output
-    outputs.append(output)
+        # save output
+        outputs.append(output)
 te = time.time()
+
 print('time elapsed with jit: ', te-ts)
 
 # plot the results  
