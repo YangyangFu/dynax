@@ -5,6 +5,29 @@ Dynamic system in Jax (Dynax): This repo implements a differentiable simulator f
 **NOTE**
 This library is still under active development. The APIs are not fully available yet.
 
+
+This library solves the following general problem:
+
+$$
+\dot x_t = f_{xx} x_t + f_{xu} u_t \\
+y_{t} = f_{yx} x_t + f_{yu} u_t
+$$
+
+or even more general format as
+
+$$
+\dot x_t = f_x(x_t, u_t) \\
+y_t = f_y(x_t,u_t)
+$$
+
+
+The discrete format is shown as:
+$$
+x_{t+1} = f_{xx}x_t + f_{xu}u_t \\
+y_{t} = f_{yx}x_t + f_{yu}u_t
+$$
+
+
 # Software Architecture
 ![structure](./doc/dynax-module.png)
 
@@ -92,7 +115,9 @@ optimal control. arXiv preprint arXiv:1706.09597, 2017.
 
 # Use Cases
 
-## Forward Simulation
+## Forward Simulation with predefined control inputs
+This is an example to simulate cases where the control inputs are predefined over time as an external file, such as csv. 
+This case is typical for inverse inference of a given model using existing data.
 
 ```python
 from dynax.agents import TabularAgent

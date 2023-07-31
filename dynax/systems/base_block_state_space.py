@@ -50,13 +50,22 @@ class BaseBlockSSM(nn.Module):
 
     def __call__(self, x, u):
 
+        rhs = self._call_state(x, u)        
+        # combinations of observation equation
+        y = self._call_observation(x, u)
+        
+        return rhs, y
+
+    def _call_state(self, x, u):
         if self._fxx and self._fxu:
             rhs = self._fxx(x) + self._fxu(u)
         elif self._fx:
             rhs = self._fx(x, u)
         else:
             raise NotImplementedError("dynamic equation is not implemented")
-        
+        return rhs 
+
+    def _call_observation(self, x, u):
         # combinations of observation equation
         if self._fyx and self._fyu:
             y = self._fyx(x) + self._fyu(u)
@@ -64,9 +73,8 @@ class BaseBlockSSM(nn.Module):
             y = self._fy(x, u)
         else:
             raise NotImplementedError("observation equation is not implemented")
-        
-        return rhs, y
-           
+        return y
+                  
 # discrete block state space model
 class BaseDiscreteBlockSSM(BaseBlockSSM):
     
