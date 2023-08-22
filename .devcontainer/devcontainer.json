@@ -2,7 +2,7 @@
 // README at: https://github.com/devcontainers/templates/tree/main/src/docker-existing-dockerfile
 {
 	"name": "jax-cpu",
-	"image": "yangyangfu/dynax-jax-cpu:latest",
+	"image": "yangyangfu/dynax-debug:latest",
 	"runArgs": [
 		"--shm-size=8.0gb",
 		"--rm",

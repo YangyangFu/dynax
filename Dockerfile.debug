@@ -1,0 +1,8 @@
+FROM yangyangfu/dynax-jax-cpu:latest 
+
+USER root
+
+RUN pip install gymnax 
+
+USER developer 
+
