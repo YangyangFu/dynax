@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import flax.linen as nn
 from jax.tree_util import Partial
 
-from dynax.systems.discrete_block_state_space import DiscreteLinearSSM
+from dynax.core.discrete_block_state_space import DiscreteLinearSSM
 from dynax.models.RC import Discrete4R3C, Continuous4R3C
 
 @Partial(jax.jit, static_argnums=(0,))

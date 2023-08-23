@@ -1,7 +1,7 @@
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
-from ..core.base_block_state_space import BaseBlockSSM
+from ..examples.base_block_state_space import BaseBlockSSM
 
 # TODO:
 # 1. how to best handle the state update? the state update is always 1 step ahead of the output. This will give a problem when used for MPC as a forward simulator.
@@ -11,8 +11,13 @@ from ..core.base_block_state_space import BaseBlockSSM
 
 class DifferentiableSimulator(nn.Module):
     model: nn.Module
+    disturbance: nn.Module
+    control: nn.Module
+    start_time: float
+    end_time: float
     dt: float
-    time: float = 0 
+    estimator: nn.Module = None
+    clock: float = start_time 
 
     @nn.compact
     def __call__(self, x_init, u, start_time, end_time):
@@ -28,27 +33,6 @@ class DifferentiableSimulator(nn.Module):
             ysol (jnp.ndarray): output trajectory
 
         """
-
-        def scan_fn(carry, ts):
-            i, xi = carry
-
-            # or ui = u.act(t)
-            # TODO: this has to be a control agent model
-            # how to deal with a mixture of agents (neural policy for control, tabular for disturbance)
-            ui = u[i,:]
-
-            # forward simulation
-            # \dot x(t) = f(x(t), u(t))
-            # y(t) = g(x(t), u(t))
-            xi_rhs, yi = self.model(xi, ui)
-            
-            # TODO: specify a solver object
-            # explicit Euler
-            # x(t+1) = x(t) + dt * \dot x(t)
-            x_next = xi + xi_rhs*self.dt
-
-            return (i+1, x_next), (xi, yi)
-        
         # specify solver intervals
 
         # specify output intervals: in case different time of points are of interest

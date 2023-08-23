@@ -1,7 +1,7 @@
 import jax.numpy as jnp 
 import flax.linen as nn
 
-from dynax.systems.base_block_state_space import BaseDiscreteBlockSSM, BaseContinuousBlockSSM
+from dynax.core.base_block_state_space import BaseDiscreteBlockSSM, BaseContinuousBlockSSM
 
 # FIXME:
 # 1. The model does not support batch operation.
