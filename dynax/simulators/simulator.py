@@ -60,7 +60,7 @@ class DifferentiableSimulator(nn.Module):
         # if u is a tabular policy, then it will take the value of time as input and gernerate a control signal
         
         # module has to be called once before the while loop
-        _, _ = self.model(x_init, jnp.zeros_like(u(start_time)))
+        _, _ = self.model(x_init, jnp.zeros_like(u[0]))
 
         # initialize model for observations at start time
         #y_init = self.model._call_observation(x_init, jnp.zeros_like(u[0,:]))
@@ -78,7 +78,8 @@ class DifferentiableSimulator(nn.Module):
         #assert xsol.shape[0] == len(tsol)
         #assert ysol.shape[0] == len(tsol)
 
-        self.time = end_time 
+        # module attributes are frozen outside of setup()
+        #self.time = end_time 
 
         return tsol, xsol, ysol
 
