@@ -52,7 +52,8 @@ class LinearInterpolation(AbstractInterpolation):
             x: interpolated state values
         """
         # Calculate the indices for the new_x values
-        indices = ((t - ts[0]) / (ts[1] - ts[0])).reshape((-1, 1))
+        indices = jnp.interp(t, ts, jnp.arange(len(ts)))
+        
         # Use linear interpolation to map the array onto the new coordinates
         result = map_coordinates(xs, [indices, jnp.arange(xs.shape[1])], order=1)
         
