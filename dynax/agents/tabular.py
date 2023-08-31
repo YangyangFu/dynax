@@ -12,7 +12,7 @@ class Tabular(BaseAgent):
         Args:
             states: jnp.ndarray, a table of states by time step and state if any
             actions: jnp.ndarray, a table of actions by time step and state if any.
-            mode: str, the mode of the agent
+            interpolation: str, the mode of the agent
                 - 'constant': the agent will use piecewise constant control actions
                 - 'linear': the agent will use a linear interpolation between the states
                 - other interpolation modes can be added later
