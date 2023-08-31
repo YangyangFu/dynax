@@ -32,11 +32,13 @@ class PiecewiseConstantInterpolation(AbstractInterpolation):
         Returns:
             x: interpolated state values
         """
-        result = xs[-1,:]  # Start with the last value as default
-        for t_b, x_b in zip(ts[::-1], xs[::-1]):
-            result = jnp.where(t < t_b, x_b, result)
-        return result
+        # Calculate the indices for the new_x values
+        indices = jnp.interp(t, ts, jnp.arange(len(ts)))
         
+        # Use linear interpolation to map the array onto the new coordinates
+        result = map_coordinates(xs, [indices, jnp.arange(xs.shape[1])], order=self.order())
+        return result 
+
 class LinearInterpolation(AbstractInterpolation):
     
     def order(self) -> int:
@@ -55,7 +57,7 @@ class LinearInterpolation(AbstractInterpolation):
         indices = jnp.interp(t, ts, jnp.arange(len(ts)))
         
         # Use linear interpolation to map the array onto the new coordinates
-        result = map_coordinates(xs, [indices, jnp.arange(xs.shape[1])], order=1)
+        result = map_coordinates(xs, [indices, jnp.arange(xs.shape[1])], order=self.order())
         
         return result
 
