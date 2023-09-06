@@ -6,10 +6,16 @@ import flax.linen as nn
 from jax.scipy.ndimage import map_coordinates
 
 class AbstractInterpolation(nn.Module, ABC):
-    """ Base class for all interpolation methods"""
+    """ Base class for time table interpolation methods"""
+    ts:jnp.ndarray 
+    xs:jnp.ndarray
+
+    def setup(self):
+        assert len(self.ts.shape) == 1, "rank of ts has to be 1 !!!"
+        assert len(self.xs.shape) == 2, "rank of xs has to be 2 !!!"
 
     @abstractmethod
-    def evaluate(self, x: jnp.ndarray, y: jnp.ndarray, new_x: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, at: jnp.ndarray) -> jnp.ndarray:
         pass
     
     @property
@@ -19,11 +25,11 @@ class AbstractInterpolation(nn.Module, ABC):
 
 class PiecewiseConstantInterpolation(AbstractInterpolation):
     """ Piecewise constant interpolation of the control actions """
-    
+
     def order(self) -> int:
         return 0
     
-    def evaluate(self, ts:jnp.ndarray, xs:jnp.ndarray, t:jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, at:jnp.ndarray) -> jnp.ndarray:
         """ Interpolate the values of x at time t using piecewise constant interpolation
         Args:
             ts: time values, shape (n,)
@@ -33,31 +39,31 @@ class PiecewiseConstantInterpolation(AbstractInterpolation):
             x: interpolated state values
         """
         # Calculate the indices for the new_x values
-        indices = jnp.interp(t, ts, jnp.arange(len(ts)))
+        indices = jnp.interp(at, self.ts, jnp.arange(len(self.ts)))
         
         # Use linear interpolation to map the array onto the new coordinates
-        result = map_coordinates(xs, [indices, jnp.arange(xs.shape[1])], order=self.order())
+        result = map_coordinates(self.xs, [indices, jnp.arange(self.xs.shape[1])], order=self.order())
         return result 
 
 class LinearInterpolation(AbstractInterpolation):
-    
+
     def order(self) -> int:
         return 1
 
-    def evaluate(self, ts: jnp.ndarray, xs: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, at: jnp.ndarray) -> jnp.ndarray:
         """ Interpolate the values of x at time t using linear interpolation
         Args:
-            ts: time values
-            xs: state values
             t: time to interpolate at
         Returns:
             x: interpolated state values
         """
         # Calculate the indices for the new_x values
-        indices = jnp.interp(t, ts, jnp.arange(len(ts)))
-        
+
+        # interpolate on x
+        indices = jnp.interp(at, self.ts, jnp.arange(len(self.ts)))
+
         # Use linear interpolation to map the array onto the new coordinates
-        result = map_coordinates(xs, [indices, jnp.arange(xs.shape[1])], order=self.order())
+        result = map_coordinates(self.xs, [indices, jnp.arange(self.xs.shape[1])], order=self.order())
         
         return result
 
@@ -66,7 +72,7 @@ class ThirdOrderHermitePolynomialInterpolation(AbstractInterpolation):
     def order(self) -> int:
         return 3
 
-    def evaluate(self, x: jnp.ndarray, y: jnp.ndarray, new_x: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, at: jnp.ndarray) -> jnp.ndarray:
         raise NotImplementedError("Third-order Hermite polynomial interpolation is not yet implemented")
 
 
@@ -75,7 +81,7 @@ class FourthOrderPolynomialInterpolation(AbstractInterpolation):
     def order(self) -> int:
         return 4
 
-    def evaluate(self, x: jnp.ndarray, y: jnp.ndarray, new_x: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, at: jnp.ndarray) -> jnp.ndarray:
         raise NotImplementedError("Fourth-order polynomial interpolation is not yet implemented")
 
 
@@ -90,22 +96,22 @@ if __name__ == "__main__":
     t = jnp.array([0.5])
     
     # create a constant interpolation
-    const = PiecewiseConstantInterpolation()
-    x = const.evaluate(ts, xs, jnp.array([0.5]))
+    const = PiecewiseConstantInterpolation(ts, xs)
+    x = const(jnp.array([0.5]))
     print("constant interpolation:", x.shape, x)
     
     # calculate gradients
-    grad_fcn = jacfwd(lambda t: const.evaluate(ts, xs, t))
+    grad_fcn = jacfwd(lambda t: const(t))
     x_grad = grad_fcn(t)
     print("constant interpolation grads:", x_grad.shape, x_grad)
     
     # Create an instance of LinearInterpolation
-    linear = LinearInterpolation()
-    x = linear.evaluate(ts, xs, t)
+    linear = LinearInterpolation(ts, xs)
+    x = linear(t)
     
     print("linear interpolation:", x.shape, x)
 
     # Test grads and values
-    grad_fcn = jacfwd(lambda t: linear.evaluate(ts, xs, t))
+    grad_fcn = jacfwd(lambda t: linear(t))
     x_grad = grad_fcn(t)
     print("linear interpolation grads:", x_grad.shape, x_grad)
