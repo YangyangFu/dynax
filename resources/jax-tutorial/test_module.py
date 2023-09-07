@@ -44,7 +44,10 @@ class LinearInterpolation(AbstractInterpolation):
         
 
         return result
-
+    
+    @nn.compact
+    def __call__(self, ts: jnp.ndarray, xs: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
+        return self.evaluate(ts, xs, t)
 
 # call like neural network layer
 class Wrapper1(nn.Module):
@@ -112,10 +115,10 @@ res3 = wrap3.apply(inits, ts, xs, t)
 print(res3)
 
 
-# class wrapper 3
+# class wrapper 4
 class Wrapper4(nn.Module):
     mode:str 
-
+ 
     @nn.compact
     def __call__(self, ts, xs, t):
         if self.mode=="linear":
@@ -154,7 +157,7 @@ print(inits)
 res5 = wrap5.apply(inits, ts, xs, t)
 print(res5)
 
-
+# class wrapper 6
 class Wrapper6(nn.Module):
     mode: str
 
@@ -184,3 +187,68 @@ inits = wrap6.init(seed, ts, xs, t)
 print(inits)
 res6 = wrap6.apply(inits, ts, xs, t)
 print(res6)    
+
+
+class Wrapper7(nn.Module):
+
+    @nn.compact
+    def __call__(self, ts, xs, t, mode='linear'):
+        if mode=="linear":
+            interp = LinearInterpolation()
+        elif mode == "constant":
+            interp = LinearInterpolation()
+
+        def roll(carry, tmp):
+            i, res = carry
+
+            res = interp(ts, xs, t)
+
+            return (i+1, res), res
+
+        tmp = jnp.arange(10)
+        carry_init = (tmp[0], jnp.zeros((3,2)))
+        
+        (_, res), _ = jax.lax.scan(roll, carry_init, tmp)
+
+        return res
+
+wrap7 = Wrapper7()
+inits = wrap7.init(seed, ts, xs, t)
+print(inits)
+res7 = wrap7.apply(inits, ts, xs, t)
+print(res7) 
+print(wrap7.tabulate(jax.random.PRNGKey(0), ts, xs, t))
+
+class Wrapper8(nn.Module):
+    interp:nn.Module
+
+    @nn.compact
+    def __call__(self, ts, xs, t, mode='linear'):
+        if mode=="linear":
+            interp = LinearInterpolation()
+        elif mode == "constant":
+            interp = LinearInterpolation()
+        else:
+            interp = self.interp 
+            
+        def roll(carry, tmp):
+            i, res = carry
+
+            res = interp(ts, xs, t)
+
+            return (i+1, res), res
+
+        tmp = jnp.arange(10)
+        carry_init = (tmp[0], jnp.zeros((3,2)))
+        
+        (_, res), _ = jax.lax.scan(roll, carry_init, tmp)
+
+        return res
+
+interp = LinearInterpolation()
+wrap8 = Wrapper8(interp=interp)
+inits = wrap8.init(seed, ts, xs, t)
+print(inits)
+res8 = wrap8.apply(inits, ts, xs, t)
+print(res8) 
+print(wrap8.tabulate(jax.random.PRNGKey(0), ts, xs, t))

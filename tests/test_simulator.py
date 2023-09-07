@@ -2,10 +2,9 @@ import jax
 import jax.numpy as jnp 
 import pandas as pd 
 
-from dynax.simulators.forward import DifferentiableSimulator
+from dynax.simulators.simulator import DifferentiableSimulator
 from dynax.models.RC import Continuous4R3C
 from dynax.agents import Tabular
-from dynax.utils.interpolate import PiecewiseConstantInterpolation, LinearInterpolation
 
 # instantiate a model
 #model = Discrete4R3C()
@@ -40,12 +39,12 @@ RESULTS = jnp.array(
 
 def test_tabular_agent():
     # agent model
-    dist = Tabular(states=jnp.arange(n_steps+1)*dt+ts, 
-                actions=jnp.ones((n_steps+1,4)), 
-                interpolation = LinearInterpolation())
-    policy = Tabular(states=jnp.arange(n_steps+1)*dt+ts, 
-                actions=jnp.ones((n_steps+1,1)), 
-                interpolation = LinearInterpolation())
+    dist = Tabular(ts=jnp.arange(n_steps+1)*dt+ts, 
+                xs=jnp.ones((n_steps+1,4)), 
+                mode = 'linear')
+    policy = Tabular(ts=jnp.arange(n_steps+1)*dt+ts, 
+                xs=jnp.ones((n_steps+1,1)), 
+                mode = 'linear')
 
     simulator = DifferentiableSimulator(
     #    state = states,
@@ -63,7 +62,8 @@ def test_tabular_agent():
 
     # simulate forward problem
     _, xsol, ysol = simulator.apply(inits, x0)
-
+    #_, xsol, ysol = simulator(x0)
+    
     assert jnp.allclose(xsol, RESULTS), "tabular agent didn't get expected results."
 
 

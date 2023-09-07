@@ -1,7 +1,13 @@
+import abc
+from typing import Optional, Union
+
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
-from ..core.base_block_state_space import BaseBlockSSM
+
+from ..agents.tabular import Tabular
+
+Scalar = float
 
 # TODO:
 # 1. how to best handle the state update? the state update is always 1 step ahead of the output. This will give a problem when used for MPC as a forward simulator.
@@ -11,16 +17,37 @@ from ..core.base_block_state_space import BaseBlockSSM
 
 class DifferentiableSimulator(nn.Module):
     model: nn.Module
-    dt: float
-    time: float = 0 
+    disturbance: Union[Scalar, nn.Module]
+    agent: Union[Scalar, jax.Array, Tabular]
+    estimator: Optional[Union[Scalar, nn.Module]]
+    start_time: Scalar = 0
+    end_time: Scalar = 1.
+    dt: Scalar = 1.
+    mode_interp: str = 'linear'
 
+    @abc.abstractmethod
+    def _gather_model_inputs(self, u: Union[Scalar, jax.Array, nn.Module], d: Union[Scalar, jax.Array, nn.Module]) -> jax.Array:
+        """ Gather inputs for dynamic model
+
+            used for rearranging the dynamic model inputs if separate models for control inputs and disturbance inputs are used.
+
+            ```
+            ut = Policy(ut_inputs)
+            dt = Disturbance(dt_inputs)
+            inputs = stack(ut,dt) # any customized order is supported
+            x_next, y = model(x, inputs)
+
+        """
+        # by default, we use (u ,d)
+        return jnp.hstack((u,d))
+    
     @nn.compact
-    def __call__(self, x_init, u, start_time, end_time):
+    def __call__(self, x_init: Union[Scalar, jax.Array]):
         """ Differentiable simulator for a given model and simulation settings. 
 
         Args:
-            x_init (jnp.ndarray): initial state
-            u (tabular policy): ut = u(t)
+            x_init (jnp.ndarray): initial state, (state_dim, ) or (state_dim, 1)
+            u (tabular policy): ut = u(t), (input_dim, ) or (input_dim, 1)
             tsol (jnp.ndarray): time vector for outputs
         
         Returns:
@@ -28,58 +55,71 @@ class DifferentiableSimulator(nn.Module):
             ysol (jnp.ndarray): output trajectory
 
         """
+        # TODO: add assertions
+        # - check input dimension
+        # - check rank: rank of x == rank of u
+        if isinstance(x_init, Scalar):
+            assert self.model.state_dim == 1
 
-        def scan_fn(carry, ts):
-            i, xi = carry
+        # specify output intervals: in case different time of points are of interest
+        tsol = jnp.arange(self.start_time, self.end_time + self.dt, self.dt)
 
-            # or ui = u.act(t)
-            # TODO: this has to be a control agent model
-            # how to deal with a mixture of agents (neural policy for control, tabular for disturbance)
-            ui = u[i,:]
+        # scan function
+        def roll(model, carry, tsol):
+            t, xt = carry
 
+            # action and disturbance
+            # 
+            ut = _agent(t)
+            dist =_disturbance(t)
+            #ut = _agent.apply(a_inits, t)
+            #dist = _disturbance.apply(d_inits, t)
+            inputs = self._gather_model_inputs(ut, dist)
+            inputs = inputs.reshape((model.input_dim,))
             # forward simulation
             # \dot x(t) = f(x(t), u(t))
             # y(t) = g(x(t), u(t))
-            xi_rhs, yi = self.model(xi, ui)
+            
+            xt_rhs, yt = model(xt, inputs)
             
             # TODO: specify a solver object
             # explicit Euler
             # x(t+1) = x(t) + dt * \dot x(t)
-            x_next = xi + xi_rhs*self.dt
-
-            return (i+1, x_next), (xi, yi)
+            x_tnext = xt + xt_rhs*self.dt
+            tnext = t + self.dt
+            return (tnext, x_tnext), (xt, yt)
         
-        # specify solver intervals
+        # standardize type
+        _agent = self.agent
+        if isinstance(self.agent, Scalar):
+            _agent = Tabular(tsol, self.agent*jnp.ones_like(tsol).reshape(-1,1), mode=self.mode_interp)
+        elif isinstance(self.agent, jax.Array):
+            # have to be rank 1 
+            assert len(self.agent.shape) == 1
+            _agent = self.agent.reshape(1, -1)
+            _agent = jnp.tile(_agent, (len(tsol), 1))
+            _agent = Tabular(tsol, _agent,  mode=self.mode_interp)
 
-        # specify output intervals: in case different time of points are of interest
-        # TODO: need make sure the last time instance is the end time
-        tsol = jnp.arange(start_time, end_time + self.dt, self.dt)
-
-        # control inputs
-        # if u is a scalar, then it is a constant input
-        # if u is a tabular policy, then it will take the value of time as input and gernerate a control signal
-        
-        # module has to be called once before the while loop
-        _, _ = self.model(x_init, jnp.zeros_like(u[0]))
-
-        # initialize model for observations at start time
-        #y_init = self.model._call_observation(x_init, jnp.zeros_like(u[0,:]))
+        _disturbance = self.disturbance
+        if isinstance(self.disturbance, Scalar):
+            _disturbance = Tabular(tsol, self.disturbance*jnp.ones_like(tsol).reshape(-1,1), mode=self.mode_interp)  
+        elif isinstance(self.disturbance, jax.Array):
+            # have to be rank 1 
+            assert len(self.disturbance.shape) == 1
+            _disturbance = self.disturbance.reshape(1, -1)
+            _disturbance = jnp.tile(_disturbance, (len(tsol), 1))
+            _disturbance = Tabular(tsol, _disturbance,  mode=self.mode_interp)
 
         # main simulation loop
-        u = u.reshape(-1, self.model.input_dim)   
-        carry_init = (0, x_init)
-        # self.t[:-1] is used to avoid the last time step
-        (_, x_final), (xsol, ysol) = jax.lax.scan(scan_fn, carry_init, tsol)
-
-        # append initial point for y and final point for x
-        #xsol = jnp.concatenate((xsol, x_final.reshape(1,-1)), axis = 0)
-        #ysol = jnp.concatenate((y_init.reshape(1,-1), ysol), axis = 0)
-        # TODO: interpolate outputs from solver to match the time vector
-        #assert xsol.shape[0] == len(tsol)
-        #assert ysol.shape[0] == len(tsol)
-
-        # module attributes are frozen outside of setup()
-        #self.time = end_time 
+        carry_init = (self.start_time, x_init)
+        
+        scan_roll = nn.scan(roll,
+                            variable_broadcast='params',
+                            split_rngs={'params':False},
+                            in_axes=0,
+                            out_axes=0,
+                            )
+        (_, x_final), (xsol, ysol) = scan_roll(self.model, carry_init, tsol)
 
         return tsol, xsol, ysol
 
