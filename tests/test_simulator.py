@@ -90,8 +90,40 @@ def test_array_agent():
 
     assert jnp.allclose(xsol, RESULTS), "tabular agent didn't get expected results."
 
+def test_closed_loop():
+
+    t = ts
+    res = [x0] 
+    x_prev = x0
+
+    while t < te:
+        dist = jnp.array([1., 1., 1., 1.])
+        policy = 1.
+
+        simulator = DifferentiableSimulator(
+        model = model,
+        disturbance=dist,
+        agent=policy,
+        estimator=None,
+        start_time = t,
+        end_time = t+dt,
+        dt = dt,
+        )
+        
+        inits = simulator.init(jax.random.PRNGKey(0), x_prev)
+        _, xsol, ysol = simulator.apply(inits, x_prev)
+
+        x_prev = xsol[-1,:]
+        res.append(x_prev)
+        t += dt 
+    
+    res = jnp.stack(res, axis=0)
+
+    assert jnp.allclose(res, RESULTS), "closed loop test didn't get expected results."
+
 
 if __name__ == "__main__":
     test_tabular_agent()
     test_array_agent()
+    test_closed_loop()
     print("all test in forward simulator passed !!!!")
