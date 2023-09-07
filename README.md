@@ -256,6 +256,52 @@ xsol, ysol = forward.apply(init_params, inputs, ts, te, ...)
 
 ```
 
+## Forward Simulation with Feedback Control
+Functional programming:
+
+```python
+from dynax.agents import PID
+
+# specify model and simulator instance
+model = Model(...)
+simulator = Simulator(...)
+policy = PID(...)
+
+# experiment settings
+ts = 0
+te = 10
+dt = 1
+
+## simulation loop
+y_init = ...
+yt = y_init
+
+# initialze simulator
+init_params = simulator.init(....)
+
+while t < te:
+    # reference signal
+    ys = reference(t)
+    # control signal from policy
+    ut = policy(yt, ys)
+    # other inputs 
+    dt = disturbance(...)
+
+    # gather for model inputs
+    inputs_t = gather(ut, dt, ...)
+
+    # step
+    xt, yt = simulator.apply(init_params, inputs, t, t+dt)
+
+    # update step
+    t += dt
+
+```
+
+Forward simualtion with closed loop control as a neural network layer
+
+- [] add design
+
 ## Inverse Simulation
 
 The inverse simulation can be formulated base on a learnable forward problem.
