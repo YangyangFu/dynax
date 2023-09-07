@@ -2,6 +2,7 @@ import jax.numpy as jnp
 import flax.linen as nn
 
 from .base import BaseAgent
+from ..utils.interpolate import PiecewiseConstantInterpolation, LinearInterpolation
 
 class Tabular(BaseAgent):
     """ Tabular agent 
@@ -20,12 +21,25 @@ class Tabular(BaseAgent):
         Usage:
             agent = Tabular()
     """
-    states: jnp.ndarray
-    actions: jnp.ndarray
-    interpolation: nn.Module
+    ts: jnp.ndarray
+    xs: jnp.ndarray
+    mode: str
+
+    #@nn.compact
+    #def __call__(self, state):
+    #    """ return the action given the state """
+    #    return self.interpolation.evaluate(self.states, self.actions, state)
     
-    def __call__(self, state):
-        """ return the action given the state """
-        return self.interpolation.evaluate(self.states, self.actions, state)
-        
+    def setup(self):
+        if self.mode=="linear":
+            interp = LinearInterpolation(ts = self.ts, xs= self.xs)
+        elif self.mode == "constant":
+            interp = PiecewiseConstantInterpolation(ts = self.ts, xs= self.xs)
+        else:
+            raise ValueError("Interpolation mode in Tabular has to be either 'linear' or 'constant' !!!")
+        self.interp = interp
+
+    def __call__(self,  at):
+
+        return self.interp(at)
 
