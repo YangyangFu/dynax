@@ -167,7 +167,7 @@ class Simulator(BaseSimulator):
     model: nn.Module
     dt: float
 
-    def __call__(self, inputs, x0, ts, te):
+    def __call__(self, states, inputs):
 
         def rollout(model, carry, scan):
             """ A rollout function for multi-steps simulation
