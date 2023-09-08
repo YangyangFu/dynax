@@ -1,76 +1,56 @@
+import abc
+from typing import Optional, Union
+
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
-from ..systems.base_block_state_space import BaseBlockSSM
 
-# TODO:
-# 1. how to best handle the state update? the state update is always 1 step ahead of the output. This will give a problem when used for MPC as a forward simulator.
-# 2. is this design modular enough to handle different scenarios of input models? e.g. neural network, tabular, etc.
+from dynax.agents.tabular import Tabular
+
+Scalar = float
 
 class DifferentiableSimulator(nn.Module):
     model: nn.Module
-    dt: float
-    time: float = 0 
+    dt: Scalar = 1.
+    mode_interp: str = 'linear'
+    start_time: Scalar = 0.
+
+    def __checker__(self, inputs, states_init):
+        """ Check setup """
+        pass
 
     @nn.compact
-    def __call__(self, x_init, u, start_time, end_time):
+    def __call__(self, states_init: Union[Scalar, jax.Array], inputs: jax.Array):
+
         """ Differentiable simulator for a given model and simulation settings. 
 
-        Args:
-            x_init (jnp.ndarray): initial state
-            u (jnp.ndarray): control input
-            tsol (jnp.ndarray): time vector for outputs
-        
-        Returns:
-            xsol (jnp.ndarray): state trajectory
-            ysol (jnp.ndarray): output trajectory
-
+        This is to mimic RNN style implementation, where the simulation forward tiem steps are determined by the input sequence.
+        inputs: (T, N)
         """
+        # TODO: add assertions
+        # - check input dimension
+        # - check rank: rank of x == rank of u
+        if isinstance(states_init, Scalar):
+            assert self.model.state_dim == 1
 
-        def scan_fn(carry, ts):
-            i, xi = carry
+        def rollout(model, carry, inputs):
+            t, states = carry 
+            rhs, y = model(states, inputs)
+            # residual connection: explicit euler method
+            states += self.dt * rhs
+            t += self.dt
 
-            # or ui = u.act(t)
-            # TODO: this has to be a control agent model
-            # how to deal with a mixture of agents (neural policy for control, tabular for disturbance)
-            ui = u[i,:]
+            return (t, states), (states, y)
 
-            # forward simulation
-            # \dot x(t) = f(x(t), u(t))
-            # y(t) = g(x(t), u(t))
-            xi_rhs, yi = self.model(xi, ui)
-            
-            # TODO: specify a solver object
-            # explicit Euler
-            # x(t+1) = x(t) + dt * \dot x(t)
-            x_next = xi + xi_rhs*self.dt
+        # main simulation loop        
+        scan = nn.scan(rollout,
+                        variable_broadcast='params',
+                        split_rngs={'params':False},
+                        in_axes=0,
+                        out_axes=0,
+                        )
+        carry = (self.start_time, states_init)
+        carry, (xsol, ysol) = scan(self.model, carry, inputs)
 
-            return (i+1, x_next), (xi, yi)
-        
-        # specify solver intervals
-
-        # specify output intervals: in case different time of points are of interest
-        # TODO: need make sure the last time instance is the end time
-        tsol = jnp.arange(start_time, end_time + self.dt, self.dt)
-
-        # module has to be called once before the while loop
-        _, _ = self.model(x_init, jnp.zeros_like(u[0,:]))
-
-        # initialize model for observations at start time
-        #y_init = self.model._call_observation(x_init, jnp.zeros_like(u[0,:]))
-
-        # main simulation loop
-        u = u.reshape(-1, self.model.input_dim)   
-        carry_init = (0, x_init)
-        # self.t[:-1] is used to avoid the last time step
-        (_, x_final), (xsol, ysol) = jax.lax.scan(scan_fn, carry_init, tsol)
-
-        # append initial point for y and final point for x
-        #xsol = jnp.concatenate((xsol, x_final.reshape(1,-1)), axis = 0)
-        #ysol = jnp.concatenate((y_init.reshape(1,-1), ysol), axis = 0)
-        # TODO: interpolate outputs from solver to match the time vector
-        #assert xsol.shape[0] == len(tsol)
-        #assert ysol.shape[0] == len(tsol)
-
-        return tsol, xsol, ysol
+        return xsol, ysol
 

@@ -14,12 +14,8 @@ import json
 
 from dynax.models.RC import Discrete4R3C
 from dynax.models.RC import Continuous4R3C
-from dynax.simulators.simulator import DifferentiableSimulator
+from dynax.simulators import DifferentiableSimulator
 
-# FIXME: 
-#   - the backward propagation is slower than functional programming as previous paper implementation 
-#   - this approach seems leads to one-step delayed in the simulation compared with the data. see the forward simulation plots
-#   - understand why the baseline model (simply uses values from previous time step as current prediction) is accurate enough for output predictions
 # ===========================================================
 # instantiate a model
 #model = Discrete4R3C()
@@ -61,13 +57,11 @@ simulator = DifferentiableSimulator(model, dt)
 key = jax.random.PRNGKey(0)
 
 # initialize model parameters
-params_init = simulator.init(key, state, u_train, ts, te) 
+params_init = simulator.init(key, state, u_train) 
 print(params_init)
-print(simulator.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), u_train, ts, te))
-t_pred, _, outputs_pred = simulator.apply(params_init, state, u_train, ts, te)
-print(t_pred.shape, outputs_pred.shape)
-print(t_pred[0], t_pred[-1], ts, te)
-print(n_train)
+print(simulator.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), u_train))
+_, outputs_pred = simulator.apply(params_init, state, u_train)
+
 
 # parameter bounds settings
 params_lb = params_init.unfreeze()
@@ -101,7 +95,7 @@ def train_step(train_state, state_init, u, target):
 
     def mse_loss(params):
         # prediction
-        _, _, outputs_pred = train_state.apply_fn(params, state_init, u, ts, te)
+        _, outputs_pred = train_state.apply_fn(params, state_init, u)
         # mse loss: match dimensions
         pred_loss = jnp.mean((outputs_pred.reshape(-1,1) - target.reshape(-1,1))**2)
 
@@ -161,7 +155,7 @@ y_true = jnp.array(data.values[:,5])
 ts = 0 
 te = (len(y_true)-1)*dt
 simulator = DifferentiableSimulator(model, dt)
-_, states_pred, outputs_pred = simulator.apply(train_state.params, state, u, ts, te)
+states_pred, outputs_pred = simulator.apply(train_state.params, state, u)
 
 plt.figure(figsize=(12, 6))
 plt.plot(y_true, 'b', label='target')

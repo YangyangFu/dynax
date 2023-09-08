@@ -34,7 +34,7 @@ te = len(u_dt)*dt
 state = jnp.array([20., 30., 26.])  # initial state
 
 simulator = DifferentiableSimulator(model, dt)
-print(simulator.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), u_dt, ts, te))
+print(simulator.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), u_dt))
 
 # forward simulation
 # simulate with given params: Cai, Cwe, Cwi, Re, Ri, Rw, Rg
@@ -47,11 +47,11 @@ rc = {'Cai': params[0], 'Cwe': params[1], 'Cwi': params[2],
 params_true = {'params': {'model': rc}}
 
 start = time.time()
-tsol, states, outputs = simulator.apply(params_true, state, u_dt, ts, te)
+states, outputs = simulator.apply(params_true, state, u_dt)
 end = time.time()
 print('time elapsed for forward simulation: ', end-start)
 print(states[0])
-print(tsol.shape, states.shape, outputs.shape)
+print(states.shape, outputs.shape)
 # plot the results  
 plt.figure()
 plt.plot(y_dt, label='y')

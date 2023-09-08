@@ -113,91 +113,260 @@ M. Okada, L. Rigazio, and T. Aoshima. Path integral networks: End-to-end differe
 optimal control. arXiv preprint arXiv:1706.09597, 2017.
 ```
 
-# Use Cases
+# Use Cases (in design)
+## Base Model
 
-## Forward Simulation with predefined control inputs
-This is an example to simulate cases where the control inputs are predefined over time as an external file, such as csv. 
-This case is typical for inverse inference of a given model using existing data.
+RRN-style implementation of Base Model
+- [] add description
+   
+## Model Definition (ODE format representation)
+Define a model with ODE format. It could be a pure-physics based model or a neural ODE.
 
 ```python
-from dynax.agents import TabularAgent
-from dynax.systems import LinearODESystem
-from dynax.solvers import Euler
+class Model(BaseSSM):
+    param_initializer
 
-# specifying a piecewise constant control agent from given control sequence
-t, u = np.linspace(0, 1, 100), np.random.rand(100)
-control = TabularAgent(t, u)
+    def setup(self):
+        """ set up ode format here 
+        """
+        self.params = self.param('p1', initializer=self.param_initializer(), ...)
+        self._fxx = fxx()
+        self._fxu = fxu()
+        self._fyx = fyx()
+        self._fyu = fyu()
+        self._fx = fx()
+        self._fy = fy()
 
-# specifying a linear ODE system
-# lode = LinearODESystem()
-# specifying a RC model for building energy system
-lode = RCModel()
+    def __call__(self, inputs):
+        # rearrange inputs for hidden states, and inputs
+        x, u = split(inputs)
+        # return 
+        return super().__call__(x, u)
 
-# specifying a numerical solver
-solver = Euler()
-
-# specifying a simulator
-ds = Simulator(lode, solver)
-
-# simulate the system
-ts = 0
-te = 1
-dt = 0.01
-t, y = ds.simulate(ts, te, dt)
+    class fxx(nn.Module):
+        ...
+    class fxu(nn.Module):
+        ...
+    class fyx(nn.Module):
+        ...
+    class fyu(nn.Module):
+        ...
+    class fx(nn.Module):
+        ...
+    class fy(nn.Module):
+        ...
 
 ```
 
+## Differentiable Simulator
+This defines a simulator with given model. It should generate results for a given time period with given inputs.
+
+```python
+class Simulator(BaseSimulator):
+    
+    model: nn.Module
+    dt: float
+
+    def __call__(self, inputs, x0, ts, te):
+
+        def rollout(model, carry, scan):
+            """ A rollout function for multi-steps simulation
+            """
+            ...
+            x, y = model(inputs)
+            ...
+            return carry, (x, y)
+        
+        scanned_rollout = nn.scan(rollout, ....)
+        carry_init = x0
+        steps_for_scan = jnp.arange(ts, te, self.dt)
+        _, (xsol, ysol) = scanned_rollout(self.model, carry_init, steps_for_scan)
+
+        return xsol, ysol
+
+```
+
+
+## Forward Simulation with given control sequences
+This is an example to simulate cases where the control inputs are predefined over time as an external file, such as csv. 
+This case is typical for inverse inference of a given model using existing data.
+
+There could be two ways to perform forward simulation. One is using functional programming as follows.
+
+```python
+from dynax.agents import Tabular
+from dynax.models import BaseModel
+from dynax.simulators import BaseSimulator
+
+# define a dynamic model
+class Model(BaseModel):
+    ...
+
+    def __call__(self, inputs):
+        ...
+        return super().__call__()
+
+# define a simulator for the model
+class Simulator(BaseSimulator):
+    ...
+
+# define simulation settings
+ts = 0
+te = 10
+dt = 1.0
+
+# given control and disturbance 
+t, u = np.linspace(ts, te, 100), np.random.rand(100,2)
+t, u = np.linspace(ts, te, 100), np.random.rand(100,4)
+# implement a gather function to create inputs for dynamical model
+inputs = gather(t, u,d)
+
+# specify model
+ode = Model(...)
+
+# specifying a simulator
+ds = Simulator(model=ode, dt=dt, ...)
+
+# simulate the system
+init_params = ds.init(jax.random.PRNGKey(0), inputs, ...)
+xsol, ysol = ds.apply(init_params, inputs)
+
+```
+
+The other approach is to formulate the forward problem as a neural network layer.
+
+```python
+class Forward(nn.Module):
+    simulator: BaseSimulator
+
+    def __call__(self, inputs, ts, te, ...):
+        
+        xsol, ysol = self.simulator(inputs, ts, te)
+
+        return xsol, ysol
+# specify differentiable simulator
+model = Model(...)
+simulator = Simulator(...)
+# formulate forward problem
+forward = Forward(...)
+
+# solve forward problem
+init_params = forward.init(jax.random.PRNGKey(0), inputs, ts, te, ...)
+xsol, ysol = forward.apply(init_params, inputs, ts, te, ...)
+
+```
+
+## Forward Simulation with Feedback Control
+Functional programming:
+
+```python
+from dynax.agents import PID
+
+# specify model and simulator instance
+model = Model(...)
+simulator = Simulator(...)
+policy = PID(...)
+
+# experiment settings
+ts = 0
+te = 10
+dt = 1
+
+## simulation loop
+y_init = ...
+yt = y_init
+
+# initialze simulator
+init_params = simulator.init(....)
+
+while t < te:
+    # reference signal
+    ys = reference(t)
+    # control signal from policy
+    ut = policy(yt, ys)
+    # other inputs 
+    dt = disturbance(...)
+
+    # gather for model inputs
+    inputs_t = gather(ut, dt, ...)
+
+    # step
+    xt, yt = simulator.apply(init_params, inputs, t, t+dt)
+
+    # update step
+    t += dt
+
+```
+
+Forward simualtion with closed loop control as a neural network layer
+
+- [] add design
+
 ## Inverse Simulation
+
+The inverse simulation can be formulated base on a learnable forward problem.
+Here take as an example a calibration problem
 
 ```python
 from dynax.dataloader import DataLoader
-from dynax.agents import TabularAgent
-from dynax.utils import LinearInterpolation
-from dynax.estimators import LeastSquareEstimator
-from dynax.systems import LinearODESystem
-from dynax.solvers import Euler
-from dynax.problems import InverseProblem
+from dynax.agents import Tabular
 from dynax.optimizers import GradientDescent
 from dynax.trainers import Trainer
 from dynax.trainers import TrainStates
 
-# load data
-data_loader = DataLoader()
-data_loader.load_data('data/linear_ode.csv')
+# define a forward problem first
+forward = Forward(...)
 
-# specify a piecewise constant control/disturbance agent
-control = TabularAgent(data_loader.t, data_loader.u)
-disturbance = LinearInterpolation(data_loader.t, data_loader.d)
+# define states for inverse problem
+class InverseTrainStates(TrainStates):
+    parameter_lb
+    parameter_ub
 
-# specify a linear ODE system
-lode = RCModel(control, disturbance)
+# define an optimizer
+optim = GradientDescent()
 
-# specify a numerical solver
-solver = Euler()
+# create train states
+train_states = InverseTrainStates.create(
+    forward = forward.apply,
+    params = params_init,
+    tx = optim, 
+    ...
+)
 
-# specify a simulator
-ds = Simulator(lode, solver)
+# load train and test data
+data_loader = DataLoader(...)
+train_ds = data_loader.train
+test_ds = data_loader.test
 
-# specify a least square estimator
-estimator = LeastSquareEstimator()
 
-# loss function
-def loss_fn(y, y_hat):
-    return np.sum((y - y_hat)**2)
+# train step
+@jax.jit
+def train_step(train_state, ..., target):
+    
+    # define a loss function for calibration
+    def loss_fn(params):
+        y_pred = train_state.forward(params, ...)
+        error = jnp.sum((target - y_pred)**2)
+
+        regularizer = (...)
+        return error + regularizer
+
+    loss, grads = jax.value_and_grad(loss_fcn)(train_state.params)
+    train_state = train_state.apply_gradients(grads=grads)
+
+    return loss, grads, train_state
 
 # specify a gradient descent optimizer
 optimizer = GradientDescent()
 
-# specify an inverse problem:
-# y' = f(x, u, d, p)
-# min_{p} ||y - y'||^2
-inverse_problem = InverseProblem(ds, estimator, params, loss_fn, data_loader, optimizer)
+# training
+n_epochs = 100
+for epoch in range(n_epochs):
+    for (x, target) in train_ds:
+        loss, grads, train_state = train_step(train_state, ..., target)
 
-# specify a trainer
-trainer = Trainer(inverse_problem, num_epochs=1000, batch_size=100, lr=0.01)
-
-# train the model
-trainer.train(data_loader, TrainStates)
+# final parameters
+params_final = train_state.params
 
 ```
 
