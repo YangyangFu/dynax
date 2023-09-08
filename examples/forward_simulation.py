@@ -69,9 +69,12 @@ y_dt = inputs_dt.values[:,5]
 
 # control agent
 n_steps = len(inputs_dt)
-policy = Tabular(states=jnp.arange(n_steps)*dt, actions=u_dt, interpolation=LinearInterpolation())
+policy = Tabular(ts=jnp.arange(n_steps)*dt, xs=u_dt, mode='linear')
 
 # simulate the model for 100 steps
+# initialize policy
+policy_params = policy.init(jax.random.PRNGKey(0), 0)
+
 # initial state
 state = jnp.array([20., 30., 26.])  
 
@@ -84,7 +87,7 @@ t = 0
 ts = time.time()
 while t < n_steps*dt:
         # tabular control signal 
-        ut = policy(t)
+        ut = policy.apply(policy_params, t)
         ut = ut.reshape((input_dim,))
 
         # advance one step
