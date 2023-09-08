@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 
-from simulator import DifferentiableSimulator
+from dynax.simulators import DifferentiableSimulator
 from dynax.models.RC import Continuous4R3C
 from dynax.agents import Tabular
 
