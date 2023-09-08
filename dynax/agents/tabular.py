@@ -23,7 +23,7 @@ class Tabular(BaseAgent):
     """
     ts: jnp.ndarray
     xs: jnp.ndarray
-    mode: str
+    mode: str = 'linear'
 
     #@nn.compact
     #def __call__(self, state):

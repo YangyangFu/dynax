@@ -1,8 +1,7 @@
-import jax 
-import jax.numpy as jnp 
-import pandas as pd 
+import jax
+import jax.numpy as jnp
 
-from dynax.simulators.simulator import DifferentiableSimulator
+from simulator import DifferentiableSimulator
 from dynax.models.RC import Continuous4R3C
 from dynax.agents import Tabular
 
@@ -15,7 +14,6 @@ output_dim = model.output_dim
 
 # resample to a given time step
 dt = 1.
-
 
 # forward simulation settings
 ts = 0.
@@ -37,44 +35,31 @@ RESULTS = jnp.array(
     [ 2.0479e+04,2.0489e+04,-2.8961e+04]]
 )
 
-def test_tabular_inputs():
+# inputs
+# disturbance sequence
+t = jnp.arange(n_steps+1)*dt + ts
+dist = jnp.ones((n_steps+1,4))
+policy = jnp.ones((n_steps+1,1))
 
-    # instantiate a model
-    simulator = DifferentiableSimulator(
-        model = model,
-        dt = dt
-    )
-
-    # given input sequences
-    inputs = jnp.ones((n_steps+1,5))
-    inputs_tab = Tabular(ts = jnp.arange(ts, te+dt, dt), xs=inputs)
-
-    # need initialize the simulator first
-    inits = simulator.init(jax.random.PRNGKey(0), inputs_tab, x0, ts, te)
-
-    # simulate forward problem
-    _, xsol, ysol = simulator.apply(inits, inputs_tab, x0, ts, te)
-    #_, xsol, ysol = simulator(x0)
-    
-    assert jnp.allclose(xsol, RESULTS), "tabular agent didn't get expected results."
+# gather for RC model inputs
+inputs = jnp.concatenate([dist[:,:2], policy, dist[:, 2:]], axis=1)
+inputs = Tabular(ts=t, xs=inputs, mode='linear')
 
 
-def test_array_inputs():
+# simulator
+simulator = DifferentiableSimulator(
+    model = model,
+    dt = dt
+)
 
-    simulator = DifferentiableSimulator(
-    #    state = states,
-        model = model,
-        dt = dt
-    )
-    inputs = jnp.array([1., 1., 1., 1., 1.])
+# need initialize the simulator first
+inits = simulator.init(jax.random.PRNGKey(0), inputs, x0, ts, te)
 
-    # need initialize the simulator first
-    inits = simulator.init(jax.random.PRNGKey(0), inputs, x0, ts, te)
+# simulate forward problem
+_, xsol, ysol = simulator.apply(inits, inputs, x0, ts, te)
+#_, xsol, ysol = simulator(x0)
+assert jnp.allclose(xsol, RESULTS), "closed loop test didn't get expected results."
 
-    # simulate forward problem
-    _, xsol, ysol = simulator.apply(inits, inputs, x0, ts, te)
-
-    assert jnp.allclose(xsol, RESULTS), "tabular agent didn't get expected results."
 
 def test_closed_loop():
 
@@ -104,9 +89,8 @@ def test_closed_loop():
     assert jnp.allclose(res, RESULTS), "closed loop test didn't get expected results."
     return res
 
-
-if __name__ == "__main__":
-    test_tabular_inputs()
-    test_array_inputs()
-    test_closed_loop()
-    print("all test in forward simulator passed !!!!")
+import time
+start = time.time()
+test_closed_loop().block_until_ready()
+end = time.time()
+print(end-start)
