@@ -370,6 +370,96 @@ params_final = train_state.params
 
 ```
 
+## Gym Wrapper
+This is to develop a general OpenGym-like API for the communication between control algorithms and differentiable simulator.
+
+The Gymwrapper library should have a minimal interface like this.
+```python
+class Space():
+    ...
+
+class Discrete(Space):
+    ...
+
+class Box(Space):
+    ...
+
+class Dict(Space):
+    ...
+
+class Tuple(Space):
+    ...
+
+class EnvStates():
+    ...
+
+class Env():
+    model: nn.Module
+
+    def step(params, action) -> Tuple():
+        
+        y = self.model()
+
+        return obs, state, reward, done, truncated, info
+    
+    def reset():
+        """ reset simulator initial states
+        """
+        ...
+        
+        return obs, state
+
+    @property
+    def name() -> str:
+        ...
+    @property
+    def num_actions() -> int:
+        ...
+    
+    def action_space():
+        ...
+    
+    def observation_space():
+        ...
+    
+    def state_space():
+        ...
+    
+    def reward_func():
+        ...
+
+def make():
+    ... 
+
+def register():
+    ...
+```
+
+To instantiate the Gym environment, we can use the following standard way:
+
+```python
+
+# instantiate env
+env, env_params = make(id, ...)
+
+# reset env
+obs, state = env.reset(...)
+
+# sample an action
+action = env.action_space(...).sample(...)
+
+# perform a step
+obs, state, reward, terminate, truncated, info = env.step(...)
+
+# jittable 
+
+# vectorized env
+venv_params = nn.vmap(env.reset, in_axes=...)
+nn.vmap(env.step, in_axes=...)
+
+```
+
+
 ## Optimal Control: MPC
 
 ```python
