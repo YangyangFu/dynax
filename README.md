@@ -17,13 +17,16 @@ or even more general format as
 
 $$
 \dot x_t = f_x(x_t, u_t) \\
+
 y_t = f_y(x_t,u_t)
 $$
 
 
 The discrete format is shown as:
+
 $$
 x_{t+1} = f_{xx}x_t + f_{xu}u_t \\
+
 y_{t} = f_{yx}x_t + f_{yu}u_t
 $$
 
