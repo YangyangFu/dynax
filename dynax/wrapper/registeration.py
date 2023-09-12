@@ -1,19 +1,18 @@
 import gymnasium as gym
-from gymnax import Environment as Env
 
 from typing import Any, Protocol, Union, Optional
 from dataclasses import dataclass, field
 
 class EnvCreator(Protocol):
     """Function type expected for an environment."""
-    def __call__(self, **kwargs: Any) -> Env:
+    def __call__(self, **kwargs: Any) -> Any:
         ...
 
 # TODO: need redesign the vectorization part
 class VectorEnvCreator(Protocol):
     """Function type expected for an environment."""
 
-    def __call__(self, **kwargs: Any) -> gym.experimental.vector.VectorEnv:
+    def __call__(self, **kwargs: Any):
         ...
 
 @dataclass
@@ -31,7 +30,7 @@ class WrapperSpec:
 
     name: str
     entry_point: str
-    kwargs: Union[dict[str, Any], None]
+    kwargs: Union[Any, None]
 
 @dataclass
 class EnvSpec:
@@ -46,12 +45,12 @@ class EnvSpec:
     max_episode_steps: Union[int, None] = field(default=None)
 
     # environment arguments
-    env_params: Union[EnvParams, None]
+    env_params: Union[EnvParams, None] = field(default=None)
 
     # post init attributes
     namespace: Union[str, None] = field(init=False) # not generated in __init__()
     name: str = field(init=False)
-    version: Union[int, None] = field(int=False)
+    version: Union[int, None] = field(init=False)
 
     # NOT IMPLEMENTED
     # applied wrappers: 
@@ -70,5 +69,5 @@ def register(id:str,
     pass 
 
 
-def make() -> Env: 
+def make(): 
     pass
