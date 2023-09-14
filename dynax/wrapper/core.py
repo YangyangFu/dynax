@@ -43,8 +43,8 @@ class Env(nn.Module):
     
     def step(
         self,
-        states: EnvStates,
         action: ActionType,
+        states: EnvStates,
         params: Parameter,
     ) -> Tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any], EnvStates]:
         """ Run one step of the environment dynamics.
@@ -65,9 +65,8 @@ class Env(nn.Module):
         """
 
         # Use default env parameters if no others specified
-        key, key_reset = jax.random.split(key)
         obs_next, reward, terminated, truncated, info, states_next = self.apply(
-            params, states, action
+            params, action, states
         )
         
         # TODO: auto-reset environment based on termination
@@ -79,54 +78,26 @@ class Env(nn.Module):
             self, 
             key: PRNGKey,
             params: Parameter,
-            states_init: Optional[EnvStates] = None 
-        ) -> Tuple[ObsType, EnvStates]:
+            states_init: Optional[EnvStates] = None,
+            deterministic: bool = True,
+        ) -> Tuple[ObsType, EnvStates, Parameter]:
         """Performs resetting of environment.
         """
 
-        obs, state = self._reset_(key, params, states_init)
-        return obs, state
-
-    def _reset_(
-            self, 
-            key: PRNGKey, 
-            params: Parameter,
-            states_init: Optional[EnvStates] = None
-        ) -> Tuple[ObsType, EnvStates]:
-        """Specify the resetting of customized environment.
-        """
         raise NotImplementedError
-
-    def _get_obs(self, states: EnvStates) -> ObsType:
-        """Applies observation function to state.
-        """
-        raise NotImplementedError
-
-    def is_terminal(self, states: EnvStates, params: Parameter) -> bool:
-        """Checks whether state transition is terminal.
-        """
-        raise NotImplementedError
-
-    def discount(self, states: EnvStates, params: Parameter) -> float:
-        """Return a discount of zero if the episode has terminated.
-        """
-        return jax.lax.select(self.is_terminal(states, params), 0.0, 1.0)
 
     @property
-    def name(self) -> str:
-        """Environment name.
+    def id(self) -> str:
+        """ Environment ID.
         """
-        return type(self).__name__
-
+        return self.name
+    
     @property
-    def num_actions(self) -> int:
-        """Number of actions possible in environment."""
-        raise NotImplementedError
-
     def action_space(self, params: Optional[Parameter]=None):
         """Action space of the environment."""
         raise NotImplementedError
 
+    @property
     def observation_space(self, params: Optional[Parameter]=None):
         """Observation space of the environment."""
         raise NotImplementedError
