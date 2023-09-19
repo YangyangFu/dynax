@@ -5,6 +5,18 @@ from dynax.core.base_block_state_space import BaseDiscreteBlockSSM, BaseContinuo
 
 # FIXME:
 # 1. The model does not support batch operation.
+"""
+This is a 4r3c model for zone temperature prediction
+ODE::   xdot = Ax + Bd
+        y = Cx
+States:
+        x = [Tai, Twe, Twi]'
+Disturbances:
+        u = [Tao, qCon_i, qHVAC, qRad_e, qRad_i]'
+Output:
+        y = [Tai]
+===================================================
+"""
 
 class Discrete4R3C(BaseDiscreteBlockSSM):
     """

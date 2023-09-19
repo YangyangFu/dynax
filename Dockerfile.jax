@@ -69,7 +69,7 @@ RUN pip install diffrax optax flax equinox
 
 # install convex optimization package
 RUN pip install --upgrade pip && \
-    pip install jax==0.4.6 jaxlib==0.4.6 cvxpy==1.3.0 diffcp==1.0.21 cvxpylayers==0.1.5 gymnasium[classic-control]
+    pip install jax==0.4.6 jaxlib==0.4.6 cvxpy==1.3.0 diffcp==1.0.21 cvxpylayers==0.1.5 gymnasium[classic-control] gymnax
 
 # X forwarding 
 # render using X11

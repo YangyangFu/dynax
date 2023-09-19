@@ -1,0 +1,76 @@
+import jax 
+import jax.numpy as jnp
+import pandas as pd 
+import matplotlib 
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import time 
+import flax.linen as nn
+
+from dynax.models.RC import Continuous4R3C
+from dynax.simulators.simulator import DifferentiableSimulator
+
+# construct a forward simulation wrapper
+class Forward(nn.Module):
+    simulator: DifferentiableSimulator
+
+    def __call__(self, states, inputs):
+        return self.simulator(states, inputs)
+    
+# basic settings for simulation
+dt = 3600
+ts = 0
+
+# load data
+inputs = pd.read_csv('./data/eplus_1min.csv', index_col=[0])
+n_samples = len(inputs)
+index = range(0, n_samples*60, 60)
+inputs.index = index
+
+# resample to a given time step
+inputs_dt = inputs.groupby([inputs.index // dt]).mean()
+u_dt = jnp.array(inputs_dt.values[:,:5])
+y_dt = jnp.array(inputs_dt.values[:,5])
+
+# instantiate a model
+#model = Discrete4R3C()
+model = Continuous4R3C()
+state_dim = model.state_dim
+input_dim = model.input_dim
+output_dim = model.output_dim
+
+# instantiate a simulator
+simulator = DifferentiableSimulator(model, dt=dt, mode_interp='linear', start_time=ts)
+print(simulator.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), jnp.zeros((1, model.input_dim))))
+
+# instantiate a forward simulation wrapper
+forward = Forward(simulator)
+print(forward.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), jnp.zeros((1, model.input_dim))))
+
+
+# initial states
+state = jnp.array([20., 30., 26.])  # initial state
+
+# forward simulation
+# simulate with given params: Cai, Cwe, Cwi, Re, Ri, Rw, Rg
+params = [10384.31640625, 499089.09375, 1321535.125,
+        1.5348844528198242, 0.5000327825546265, 1.000040054321289, 
+        20.119935989379883]
+rc = {'Cai': params[0], 'Cwe': params[1], 'Cwi': params[2],
+    'Re': params[3], 'Ri': params[4], 'Rw': params[5], 'Rg': params[6]
+    }
+params_true = {'params': {'simulator':{'model': rc}}}
+
+start = time.time()
+states, outputs = forward.apply(params_true, state, u_dt)
+end = time.time()
+print('time elapsed for forward simulation: ', end-start)
+print(states[0])
+print(states.shape, outputs.shape)
+# plot the results  
+plt.figure()
+plt.plot(y_dt, label='y')
+plt.plot(outputs, label='y_hat')
+plt.legend()
+plt.savefig('diff_simulator.png')
+plt.close()
