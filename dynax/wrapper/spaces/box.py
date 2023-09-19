@@ -1,6 +1,5 @@
 from typing import Any, Union, Sequence, SupportsFloat
 
-import chex
 import jax
 import jax.numpy as jnp 
 

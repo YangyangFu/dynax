@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Tuple, Union, Optional, TypeVar, SupportsFloat, Any, Callable
-from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -19,10 +18,19 @@ ObsType = TypeVar("ObsType")
 ActionType = TypeVar("ActionType")
 RenderFrame = TypeVar("RenderFrame")
 
-@struct.dataclass
-class EnvStates:
-    time: SupportsFloat
+class EnvStates(flax.struct.PyTreeNode):
+    time: SupportsFloat 
 
+    def update(self, time: float = 0.0, **kwargs) -> EnvStates:
+        return self.replace(
+            time=time,
+            **kwargs,
+        )
+
+    @classmethod
+    def create(cls, time: float = 0.0, **kwargs) -> EnvStates:
+        return cls(time=time, **kwargs)
+    
 class Env(nn.Module):
     """ Generic differentiable environment.
     """

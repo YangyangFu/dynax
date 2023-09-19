@@ -1,9 +1,11 @@
 from typing import Any, Generic, TypeVar
 
-import chex
-import flax.linen as nn 
+import jax
+import jax.numpy as jnp 
 
 T = TypeVar('T')
+Array = jnp.ndarray
+PRNGKey = jax.random.PRNGKey
 
 class Space(Generic[T]):
     r"""
@@ -11,7 +13,7 @@ class Space(Generic[T]):
     
     """
 
-    def sample(self, rng: chex.PRNGKey) -> chex.Array:
+    def sample(self, rng: PRNGKey) -> Array:
         raise NotImplementedError
     
     def contains(self, x: Any):

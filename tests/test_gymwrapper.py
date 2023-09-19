@@ -53,7 +53,7 @@ print("jittable run time: ", time.time() - start_time)
 #        JIT 1: jit step() only
 # ================================
 # test jittable conditions
-env = nn.jit(RC)(start_time=ts, end_time=te, dt=dt, num_actions=11, name='RC-V1')
+env = RC(start_time=ts, end_time=te, dt=dt, num_actions=11, name='RC-V1')
 
 t = ts 
 obs, states, params = env.reset(key)
@@ -97,7 +97,7 @@ carry = (env.start_time, states)
 
 start_time = time.time()
 _, xsol = jax.lax.scan(rollout, carry, jnp.array(keys))
-print("jittable run time: ", time.time() - start_time)
+print("jittable 2 run time: ", time.time() - start_time)
 actions, xs = xsol
 print(actions)
 

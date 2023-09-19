@@ -9,12 +9,10 @@ import jax.numpy as jnp
 import flax
 import flax.linen as nn
 from flax.core.frozen_dict import freeze
-from flax.struct import dataclass, field
-from functools import partial 
 
 from dynax.models.RC import Continuous4R3C
 from dynax.simulators.simulator import DifferentiableSimulator as DS
-from dynax.wrapper.core import Env
+from dynax.wrapper.core import Env, EnvStates
 from dynax.wrapper.spaces import Discrete, Box
 from dynax.agents.tabular import Tabular
 
@@ -65,23 +63,11 @@ disturbance_cols = ['out_temp', 'qint_lump', 'qwin_lump', 'qradin_lump']
 disturbance = data[disturbance_cols]
 DISTURBANCE = Tabular(ts=index, xs=disturbance.values, mode='linear')
 
+class RCStates(EnvStates):
+    x: jnp.ndarray # [Tout, Text_wall, Tint_wall]
+    time: float
 
-class EnvStates(flax.struct.PyTreeNode):
-    x: jnp.ndarray # [Tout, Text_wall, Tint_wall] 
-    time: float 
-
-    def update(self, x: jnp.ndarray, time: float = 0.0, **kwargs) -> EnvStates:
-        return self.replace(
-            x= x,
-            time=time,
-            **kwargs,
-        )
-
-    @classmethod
-    def create(cls, x: jnp.ndarray, time: float = 0.0, **kwargs) -> EnvStates:
-        return cls(x=x, time=time, **kwargs)
-    
-STATES = EnvStates.create(x=jnp.array([20., 30., 26.]), time=START_TIME)
+STATES = RCStates.create(x=jnp.array([20., 30., 26.]), time=START_TIME)
 
 class RC(Env):
     """ Differentiable RC environment with discrete actions
