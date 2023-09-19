@@ -10,6 +10,7 @@ import flax
 import flax.linen as nn
 from flax.core.frozen_dict import freeze
 from flax.struct import dataclass, field
+from functools import partial 
 
 from dynax.models.RC import Continuous4R3C
 from dynax.simulators.simulator import DifferentiableSimulator as DS
@@ -64,13 +65,23 @@ disturbance_cols = ['out_temp', 'qint_lump', 'qwin_lump', 'qradin_lump']
 disturbance = data[disturbance_cols]
 DISTURBANCE = Tabular(ts=index, xs=disturbance.values, mode='linear')
 
-# CLASS DEFINITION
-@dataclass
-class EnvStates:
-    x: jnp.ndarray # [Tout, Text_wall, Tint_wall] 
-    time: float = 0.0
 
-STATES = EnvStates(x=jnp.array([20., 30., 26.]), time=START_TIME)
+class EnvStates(flax.struct.PyTreeNode):
+    x: jnp.ndarray # [Tout, Text_wall, Tint_wall] 
+    time: float 
+
+    def update(self, x: jnp.ndarray, time: float = 0.0, **kwargs) -> EnvStates:
+        return self.replace(
+            x= x,
+            time=time,
+            **kwargs,
+        )
+
+    @classmethod
+    def create(cls, x: jnp.ndarray, time: float = 0.0, **kwargs) -> EnvStates:
+        return cls(x=x, time=time, **kwargs)
+    
+STATES = EnvStates.create(x=jnp.array([20., 30., 26.]), time=START_TIME)
 
 class RC(Env):
     """ Differentiable RC environment with discrete actions
@@ -135,7 +146,7 @@ class RC(Env):
         states_next, outs = self.simulator(states.x, inputs)
 
         # update states
-        states_next = EnvStates(
+        states_next = states.update(
             x=states_next[0], # the first dimension is the time dimension 
             time=states.time+self.dt
         )
@@ -147,7 +158,7 @@ class RC(Env):
         reward, cost, dTz = self._get_reward(obs_next)
 
         # terminated
-        terminated = self._is_terminated(states_next)
+        terminated = self._is_terminated(states_next.x)
 
         # truncated: not used. 
         # use a TimeLimit Wrapper to enable this
@@ -254,18 +265,18 @@ class RC(Env):
         
         return reward, cost, dTz
 
-    # TODO: not jittable
-    def _is_terminated(self, states: EnvStates) -> bool:
-        """ Check if the episode is terminated due to states violations
+    # Jittable function
+    def _is_terminated(self, x: jnp.ndarray) -> float:
+        """ Ittable implementation to check if the episode is terminated due to states violations
         """
-        #return bool(
-        #    (states.x > 40.).any() 
-        #    or (states.x < 12.).any()
-        #)
-        terminated = jnp.where((states.x > 40.).any() or (states.x < 12.).any(), 1, 0)
-        
-        return terminated
-    
+        y = nn.activation.relu(x-40.).sum() + nn.activation.relu(12.-x).sum()
+
+        # return 1 if terminated else 0        
+        return jax.lax.cond(y > 0.0, 
+                 lambda x: 1.0,
+                 lambda x: 0.0,
+                 y)
+
     def reset(self,
             key: PRNGKey,
             params: Parameter = PARAMS,
