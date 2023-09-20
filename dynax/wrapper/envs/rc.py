@@ -126,7 +126,7 @@ class RC(Env):
 
         # time table for disturbance
         dist = self.disturbance(states.time)
-        
+
         # construct inputs based on model needs: 
         inputs = jnp.array([dist[0], dist[1], action, dist[2], dist[3]]).reshape(1,-1)
         states_next, outs = self.simulator(states.x, inputs)
@@ -273,7 +273,8 @@ class RC(Env):
         """
         # if stochastic, add uniform noise to initial states
         if not determnistic:
-            states.x += jax.random.uniform(key, minval=-1, maxval=1., shape=states.x.shape)
+            x = states.x + jax.random.uniform(key, minval=-1, maxval=1., shape=states.x.shape)
+            states = states.update(x=x)
 
         # reset simulator: NOT NEEDED as the simulator as an environment is already trained.
         

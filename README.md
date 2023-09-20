@@ -381,94 +381,44 @@ params_final = train_state.params
 ```
 
 ## Gym Wrapper
-This is to develop a general OpenGym-like API for the communication between control algorithms and differentiable simulator.
+This module provides a general differentiable and jittable wrapper for differentiable simulators.
+The jittable capability can speed up rollout simulations in a magnitude of 10x-100x.
 
-The Gymwrapper library should have a minimal interface like this.
+Key highlight usages are as follows:
 ```python
-class Space():
-    ...
+import jax 
+import flax.linen as nn
+from dynax.wrapper.envs.rc import RC
 
-class Discrete(Space):
-    ...
+# basic OpenGym-like interface
+env = RC(...)
 
-class Box(Space):
-    ...
+seed = 0
+key = jax.random.PRNGKey(seed)
+obs, states, params = env.reset(key)
+action = env.action_space.sample(key)
+obs, reward, terminate, truncated, info, states = env.step(action, states, params)
 
-class Dict(Space):
-    ...
+# jittable functional interface
+env = RC(...)
+obs, states, params = jax.jit(env.reset)(key)
+action = jax.jit(env.action_space.sample)(key)
+obs, reward, terminate, truncated, info, states = jax.jit(env.step)(action, states, params)
 
-class Tuple(Space):
-    ...
+# jittable module
+env = nn.jit(RC)(...)
+obs, states, params = env.reset(key)
+action = env.action_space.sample(key)
+obs, reward, terminate, truncated, info, states = env.step(action, states, params)
 
-class EnvStates():
-    ...
-
-class Env():
-    model: nn.Module
-
-    def step(params, action) -> Tuple():
-        
-        y = self.model()
-
-        return obs, state, reward, done, truncated, info
-    
-    def reset():
-        """ reset simulator initial states
-        """
-        ...
-        
-        return obs, state
-
-    @property
-    def name() -> str:
-        ...
-    @property
-    def num_actions() -> int:
-        ...
-    
-    def action_space():
-        ...
-    
-    def observation_space():
-        ...
-    
-    def state_space():
-        ...
-    
-    def reward_func():
-        ...
-
-def make():
-    ... 
-
-def register():
-    ...
+# vectorized env 
+n_parallel = 10
+env = RC(...)
+keys = jax.random.split(key, n_parallel) # 10 different seeds
+obs, states, params = jax.vmap(env).reset(keys) # different initial states if suppored from different reset()
+action = jax.vmap(env.action_space.sample)(keys) # different actions
+obs, reward, terminate, truncated, info, states = jax.vmap(env.step)(action, states, params) # parallel steps
 ```
-
-To instantiate the Gym environment, we can use the following standard way:
-
-```python
-
-# instantiate env
-env, env_params = make(id, ...)
-
-# reset env
-obs, state = env.reset(...)
-
-# sample an action
-action = env.action_space(...).sample(...)
-
-# perform a step
-obs, state, reward, terminate, truncated, info = env.step(...)
-
-# jittable 
-
-# vectorized env
-venv_params = nn.vmap(env.reset, in_axes=...)
-nn.vmap(env.step, in_axes=...)
-
-```
-
 
 ## Optimal Control: MPC
 

@@ -80,3 +80,5 @@ def test_discrete_rc():
 if __name__ == '__main__':
     test_discrete_linear_ssm()
     test_discrete_rc() 
+
+    print("All tests in test_forward passed !!!")
