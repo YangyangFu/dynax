@@ -7,7 +7,6 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from flax.training.train_state import TrainState
 from flax.core.frozen_dict import freeze
 import optax 
 import json 
@@ -15,6 +14,7 @@ import json
 from dynax.models.RC import Discrete4R3C
 from dynax.models.RC import Continuous4R3C
 from dynax.simulators import DifferentiableSimulator
+from dynax.trainer.train_state import TrainState
 
 # ===========================================================
 # instantiate a model
