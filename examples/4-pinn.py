@@ -50,7 +50,7 @@ data = data.dropna()
 print(data.head())
 
 # split training and testing
-ratio = 0.75
+ratio = 0.25
 n_train = int(len(data)*ratio)
 data_train = data.iloc[:n_train, :]
 data_test = data.iloc[n_train:, :]

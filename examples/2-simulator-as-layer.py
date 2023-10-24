@@ -47,7 +47,6 @@ print(simulator.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), j
 forward = Forward(simulator)
 print(forward.tabulate(jax.random.PRNGKey(0), jnp.zeros((model.state_dim,)), jnp.zeros((1, model.input_dim))))
 
-
 # initial states
 state = jnp.array([20., 30., 26.])  # initial state
 
