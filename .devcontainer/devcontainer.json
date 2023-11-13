@@ -13,7 +13,8 @@
 			"extensions": [
 				"ms-toolsai.jupyter",
 				"ms-python.python",
-				"yzhang.markdown-all-in-one"
+				"yzhang.markdown-all-in-one",
+				"ms-python.vscode-pylance@2023.10.40"
 			]
 		}
 	}, 
