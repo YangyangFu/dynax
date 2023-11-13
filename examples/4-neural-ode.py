@@ -77,7 +77,7 @@ class Model(nn.Module):
         # x0: (Dx0,)
         # u: (L, Du)
         # estimator
-        state_est =  self.estimator(x0)
+        state_est = self.estimator(x0)
         state_est = nn.relu(state_est)
 
         # dynamics
