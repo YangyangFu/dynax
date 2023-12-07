@@ -16,16 +16,16 @@ DOCKERFILE_TORCH = Dockerfile.torch
 DOCKERFILE_DEBUG = Dockerfile.debug
 
 build_jl: 
-	docker build -f ${DOCKERFILE_JL} --no-cache --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JL} .
+	docker build -f ${DOCKERFILE_JL} --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JL} .
 
 build_jax_cpu:
-	docker build -f ${DOCKERFILE_JAX} --no-cache --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JAX_CPU} .
+	docker build -f ${DOCKERFILE_JAX} --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JAX_CPU} .
 
 build_jax_cuda:
-	docker build -f ${DOCKERFILE_JAX_CUDA} --no-cache --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JAX_CUDA} .
+	docker build -f ${DOCKERFILE_JAX_CUDA} --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JAX_CUDA} .
 
 build_torch_cpu:
-	docker build -f ${DOCKERFILE_TORCH} --no-cache --rm -t ${HOST}/${IMAGE_NAME}-${TAG_TORCH_CPU} .
+	docker build -f ${DOCKERFILE_TORCH} --rm -t ${HOST}/${IMAGE_NAME}-${TAG_TORCH_CPU} .
 
 build_debug:
-	docker build -f ${DOCKERFILE_DEBUG} --no-cache --rm -t ${HOST}/${IMAGE_NAME}-${TAG_DEBUG} .
+	docker build -f ${DOCKERFILE_DEBUG} --rm -t ${HOST}/${IMAGE_NAME}-${TAG_DEBUG} .
