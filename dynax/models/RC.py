@@ -96,7 +96,8 @@ class Discrete4R3C(BaseDiscreteBlockSSM):
 
         def __call__(self, x):
             return self.A @ x
-
+            #return jnp.einsum('ij,bj...->bi...', self.A, x)
+        
     class fxu(nn.Module):
         Cai: float
         Cwe: float

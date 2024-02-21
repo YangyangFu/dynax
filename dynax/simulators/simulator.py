@@ -25,7 +25,8 @@ class DifferentiableSimulator(nn.Module):
         """ Differentiable simulator for a given model and simulation settings. 
 
         This is to mimic RNN style implementation, where the simulation forward tiem steps are determined by the input sequence.
-        inputs: (T, N)
+        states_init: (B, Nx), initial states of the system
+        inputs: (B, T, Ni)
         """
         # TODO: add assertions
         # - check input dimension
@@ -46,7 +47,7 @@ class DifferentiableSimulator(nn.Module):
         scan = nn.scan(rollout,
                         variable_broadcast='params',
                         split_rngs={'params':False},
-                        in_axes=0,
+                        in_axes=-2,
                         out_axes=0,
                         )
         carry = (self.start_time, states_init)
