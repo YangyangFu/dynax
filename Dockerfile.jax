@@ -34,15 +34,13 @@ RUN apt-get update -q && \
 ENV PATH /opt/conda/bin:$PATH
 
 # Leave these args here to better use the Docker build cache
-ARG CONDA_VERSION=py38_4.9.2
-ARG CONDA_MD5=122c8c9beb51e124ab32a0fa6426c656
+ARG CONDA_VERSION=py310_24.1.2-0
+ARG CONDA_SHA256SUM=3f2e5498e550a6437f15d9cc8020d52742d0ba70976ee8fce4f0daefa3992d2e
 
 RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-${CONDA_VERSION}-Linux-x86_64.sh -O miniconda.sh && \
-    echo "${CONDA_MD5}  miniconda.sh" > miniconda.md5 && \
-    if ! md5sum --status -c miniconda.md5; then exit 1; fi && \
     mkdir -p /opt && \
     sh miniconda.sh -b -p /opt/conda && \
-    rm miniconda.sh miniconda.md5 && \
+    rm miniconda.sh && \
     ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh && \
     echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc && \
     echo "conda activate base" >> ~/.bashrc && \
@@ -52,7 +50,7 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-${CONDA_VERSION}
 
 # Install  
 # add ipykernel for jupyter notebook in devcontainer
-RUN conda update -c defaults conda && \
+RUN conda update -n base -c defaults conda && \
     conda config --add channels conda-forge && \
     conda install pip \
     matplotlib \
@@ -61,6 +59,9 @@ RUN conda update -c defaults conda && \
     pandas\
     ipykernel && \
     conda clean -ya
+# this is needed to run scipy on ubuntu 22.04 
+RUN conda install -c conda-forge gcc==12.1.0 && \
+    conda clean -ya
 
 # install jax ecosystem
 RUN pip install --upgrade pip && \
@@ -68,6 +69,9 @@ RUN pip install --upgrade pip && \
 
 # install convex optimziation
 #RUN pip install cvxpy==1.3.0 diffcp==1.0.21 cvxpylayers==0.1.5 
+
+# install koopman operation
+RUN pip install pykoopman==1.1.0
 
 # X forwarding 
 # render using X11

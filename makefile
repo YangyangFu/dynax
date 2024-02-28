@@ -19,7 +19,7 @@ build_jl:
 	docker build -f ${DOCKERFILE_JL} --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JL} .
 
 build_jax_cpu:
-	docker build -f ${DOCKERFILE_JAX} --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JAX_CPU} .
+	docker build -f ${DOCKERFILE_JAX} -t ${HOST}/${IMAGE_NAME}-${TAG_JAX_CPU} .
 
 build_jax_cuda:
 	docker build -f ${DOCKERFILE_JAX_CUDA} --rm -t ${HOST}/${IMAGE_NAME}-${TAG_JAX_CUDA} .
